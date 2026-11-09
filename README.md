@@ -4,6 +4,7 @@ AI code review using **your own model server**: vLLM, Ollama, LM Studio, llama.c
 
 - **Review uncommitted changes**, including untracked files, or **staged changes only**. Findings show up in the Problems panel and in a Markdown report.
 - **Review a GitHub pull request** by picking from the repo's open PRs or pasting a number or URL.
+- **Run it outside VS Code**: as a CLI (`local-code-review`), as a `gh` extension (`gh local-review 123`), or as a **GitHub Action** that reviews PRs in any repo.
 - **Post the result as a real GitHub PR review.** Comments go inline on the changed lines, with a summary in the review body. You can submit it right away, request changes when there are blocking findings, or create a **pending (draft) review** so you can delete bad comments before submitting it yourself.
 
 ## Screenshots
@@ -125,6 +126,97 @@ Turn on `github.suggestionBlocks` to render proposed fixes as one-click ```` ```
 
 **Authentication** uses VS Code's built-in GitHub sign-in (scope `repo`). If your org blocks VS Code's OAuth app, set `github.auth` to `gh-cli` to use `gh auth token` instead. For **GitHub Enterprise Server**, set `github.apiUrl` to `https://your-host/api/v3`. Also set VS Code's `github-enterprise.uri`, or use `gh-cli`.
 
+## Command line and `gh`
+
+The same review engine ships as a CLI with no runtime dependencies:
+
+```bash
+npm install -g github:georgestephanis/local-code-review-vscode   # installs `local-code-review`
+
+local-code-review test                     # check the server connection
+local-code-review pr 123                   # review PR #123 of the current repo (asks whether to post)
+local-code-review pr owner/repo#123 --post # review and post as a comment review
+local-code-review pr --draft               # PR for the current branch → pending review you edit on GitHub
+local-code-review local                    # uncommitted changes in the current repo
+local-code-review local --staged --fail-on major   # pre-commit / CI style: exit 1 on major+ findings
+local-code-review pr 123 -f json           # machine-readable output (also: -f markdown, -o report.md)
+```
+
+### As a `gh` extension
+
+```bash
+git clone https://github.com/georgestephanis/local-code-review-vscode && cd local-code-review-vscode
+npm install
+cd gh-local-review && gh extension install .
+
+gh local-review              # PR for the current branch
+gh local-review 123 --post
+gh local-review local        # uncommitted changes
+```
+
+If you'd rather not install an extension, an alias does the same once the CLI is on your `PATH`: `gh alias set --shell review 'local-code-review pr "$@"'`, then `gh review 123`.
+
+### Configuration
+
+The CLI reads the same settings as the extension (drop the `localCodeReview.` prefix). It checks, lowest priority first:
+
+1. `~/.config/local-code-review/config.json` (yours; may hold `apiKey`)
+2. `<repo>/.local-code-review.json` (shared per repo; may not hold `apiKey`)
+3. `LCR_*` environment variables
+4. command-line flags
+
+```jsonc
+// ~/.config/local-code-review/config.json
+{
+  "baseUrl": "http://gpu-box:8000/v1",
+  "model": "Qwen/Qwen2.5-Coder-32B-Instruct",
+  "apiKey": "…",
+  "extraBody": { "chat_template_kwargs": { "enable_thinking": false } },
+  "maxChunkChars": 60000
+}
+```
+
+Run `local-code-review config` to see the effective settings, with secrets redacted, and where each came from. For GitHub it uses `GH_TOKEN`/`GITHUB_TOKEN`, or else `gh auth token`. `local-code-review --help` lists every flag and environment variable.
+
+## GitHub Action
+
+Other repositories can have PRs reviewed by any OpenAI-compatible host. Copy [`examples/workflows/local-code-review.yml`](examples/workflows/local-code-review.yml) into `.github/workflows/`, then set:
+
+- **variable** `LLM_BASE_URL`, e.g. `https://llm.example.com/v1`
+- **variable** `LLM_MODEL` (optional)
+- **secret** `LLM_API_KEY` (optional)
+
+The core of it:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: georgestephanis/local-code-review-vscode@main
+        with:
+          base-url: ${{ vars.LLM_BASE_URL }}
+          model: ${{ vars.LLM_MODEL }}
+          api-key: ${{ secrets.LLM_API_KEY }}
+          review-event: comment      # comment | request-changes | none
+          # fail-on: critical
+          # extra-body: '{"chat_template_kwargs": {"enable_thinking": false}}'
+```
+
+The example workflow reviews PRs when they're opened or marked ready. Maintainers can also request a review by commenting **`/review`** on a PR, or run it by hand from the Actions tab. The review is posted by `github-actions[bot]`. It also appears in the job summary and as annotations. The `findings`, `blocking` and `report` outputs let later steps act on the result.
+
+Things to know:
+
+- **The runner must be able to reach your model server.** For a server on a private network, either:
+  - use a self-hosted runner on that network, or
+  - join the network from the job (the example has a commented [Tailscale](https://github.com/tailscale/github-action) step), or
+  - expose the server over HTTPS behind an API key or an auth proxy (put proxy headers in `extra-headers` from secrets).
+- **Fork PRs don't get secrets** on `pull_request` events. The example skips them; a maintainer can `/review` instead. The action never checks out or runs PR code. It reads the diff through the API, and the workflow only needs `contents: read` and `pull-requests: write`.
+- **Inputs:** `base-url`, `model`, `api-key`, `provider`, `extra-headers`, `extra-body`, `json-mode`, `review-event`, `min-severity`, `fail-on`, `max-chunk-chars`, `max-output-tokens`, `concurrency`, `timeout-seconds`, `extra-instructions`, `pr-number`, `repository`, `github-token`. See [`action.yml`](action.yml).
+
 ## Project-specific guidelines
 
 Add `.github/code-review-instructions.md` (configurable via `localCodeReview.instructionsFile`) to a repo and its contents get added to the prompt. For PRs it's read from the base branch. For example:
@@ -156,7 +248,8 @@ See [AGENTS.md](AGENTS.md) for the architecture, conventions and test commands. 
 
 ```bash
 npm run compile   # or: npm run watch
-npm test          # unit tests + mock OpenAI/Ollama server tests (node:test)
+npm test          # unit, mock-server and CLI tests (node:test)
+npm run cli -- --help
 ```
 
 The code is laid out as follows:

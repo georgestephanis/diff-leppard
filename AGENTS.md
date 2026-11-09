@@ -25,8 +25,18 @@ It can also post the result back to the PR as a GitHub review with inline commen
 | `src/git.ts` | `git` subprocess helpers, local diffs, untracked files | no |
 | `src/github.ts` | GitHub REST client, PR/remote URL parsing, review payload + posting with fallbacks | no |
 | `src/report.ts` | Markdown report rendering | no |
+| `src/pr.ts` | Load a PR's files + review guidelines (shared by extension and CLI) | no |
+| `src/config.ts` | CLI config: defaults < user file < repo `.local-code-review.json` < `LCR_*` env < flags | no |
+| `src/format.ts` | Terminal (ANSI) rendering of results | no |
+| `src/cli.ts` | CLI entry (`local-code-review`, `gh local-review`): arg parsing, posting prompt, exit codes | no |
 | `src/extension.ts` | **The only VS Code glue**: commands, settings, progress, diagnostics, auth, quick picks | yes |
 | `test/*.test.ts` | `node:test` unit tests + mock OpenAI/Ollama HTTP server tests | no |
+| `test/cli.test.ts` | Config layering and the CLI end-to-end against `test/fixtures/mock-openai.js` | no |
+| `bin/local-code-review.js` | npm `bin` shim | – |
+| `gh-local-review/` | `gh` extension wrapper (bash) that runs `out/src/cli.js` from the clone or `local-code-review` on PATH | – |
+| `action.yml`, `action/*.sh` | Composite GitHub Action; builds only the CLI via `tsconfig.cli.json` (no heavy dev deps) | – |
+| `examples/workflows/` | Copy-paste workflow for other repos | – |
+| `.github/workflows/ci.yml` | Tests, VSIX packaging, and an action smoke test against the mock server | – |
 | `test/vscode/` | Integration test that launches a real VS Code via `@vscode/test-electron` | yes |
 
 Keep the "no `vscode`" modules free of VS Code imports so they stay testable with plain Node.
@@ -41,7 +51,7 @@ npm run test:vscode    # launches VS Code; set VSCODE_PATH="/Applications/Visual
 npm run package        # -> local-code-review.vsix
 ```
 
-Run `npm test` before you finish any change. Run `npm run test:vscode` when you change `extension.ts` or `package.json` contributions.
+Run `npm test` before you finish any change. Anything imported by `src/cli.ts` must not import `vscode`; `tsconfig.cli.json` (used by the Action) compiles without VS Code types and will fail if it does. CLI settings mirror the extension's `localCodeReview.*` settings; when you add a setting, add it to `package.json`, `readSettings()` in `extension.ts`, `CliSettings`/`defaultSettings()` in `config.ts`, and an `LCR_*` env var / action input if CI users need it. Run `npm run test:vscode` when you change `extension.ts` or `package.json` contributions.
 
 ## Conventions and invariants
 

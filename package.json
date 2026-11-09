@@ -13,7 +13,8 @@
     "url": "https://github.com/georgestephanis/local-code-review-vscode/issues"
   },
   "engines": {
-    "vscode": "^1.90.0"
+    "vscode": "^1.90.0",
+    "node": ">=20"
   },
   "categories": [
     "Linters",
@@ -27,6 +28,15 @@
     "pull request"
   ],
   "main": "./out/src/extension.js",
+  "bin": {
+    "local-code-review": "bin/local-code-review.js"
+  },
+  "files": [
+    "bin/",
+    "out/src/**/*.js",
+    "gh-local-review/",
+    "AGENTS.md"
+  ],
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -366,7 +376,9 @@
     "watch": "tsc -watch -p .",
     "test": "npm run compile && node --test out/test/*.test.js",
     "package": "npm run compile && vsce package --skip-license --out local-code-review.vsix",
-    "test:vscode": "npm run compile && node out/test/vscode/run.js"
+    "test:vscode": "npm run compile && node out/test/vscode/run.js",
+    "prepare": "tsc -p .",
+    "cli": "node out/src/cli.js"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

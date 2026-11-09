@@ -1,0 +1,110 @@
+name: Local Code Review
+description: AI code review of a pull request using your own OpenAI-compatible LLM server (vLLM, Ollama, LM Studio, llama.cpp, …), posted as a PR review.
+author: George Stephanis
+branding:
+  icon: check-square
+  color: blue
+
+inputs:
+  base-url:
+    description: "Model server base URL, e.g. https://llm.example.com/v1 (OpenAI-compatible) or http://host:11434 with provider: ollama. Must be reachable from the runner."
+    required: true
+  model:
+    description: Model name. Empty = use the server's only model.
+    default: ""
+  api-key:
+    description: API key, sent as "Authorization Bearer". Pass it from a secret.
+    default: ""
+  provider:
+    description: openai | ollama
+    default: openai
+  extra-headers:
+    description: 'JSON object of extra HTTP headers, e.g. {"CF-Access-Client-Id": "…"}. Pass secrets via secrets.'
+    default: ""
+  extra-body:
+    description: 'JSON object merged into every request body, e.g. {"chat_template_kwargs": {"enable_thinking": false}}'
+    default: ""
+  json-mode:
+    description: json_object | json_schema | none
+    default: ""
+  review-event:
+    description: "comment = post a comment review; request-changes = request changes when there are critical/major findings; none = don't post (job summary only)"
+    default: comment
+  min-severity:
+    description: Drop findings below this severity (critical | major | minor | nit)
+    default: minor
+  fail-on:
+    description: Fail the job if any finding is at or above this severity. Empty = never fail on findings.
+    default: ""
+  max-chunk-chars:
+    description: Max diff characters per model request (size to the model's context window)
+    default: ""
+  max-output-tokens:
+    description: Max tokens the model may generate per request
+    default: ""
+  concurrency:
+    description: Parallel model requests
+    default: ""
+  timeout-seconds:
+    description: Per-request timeout
+    default: ""
+  extra-instructions:
+    description: Extra review guidelines added to the prompt. The repo's .github/code-review-instructions.md (on the base branch) is used automatically.
+    default: ""
+  pr-number:
+    description: Pull request number
+    default: ${{ github.event.pull_request.number || github.event.issue.number }}
+  repository:
+    description: owner/repo
+    default: ${{ github.repository }}
+  github-token:
+    description: Token used to read the PR and post the review (needs pull-requests write)
+    default: ${{ github.token }}
+  github-api-url:
+    description: GitHub API URL (set automatically for GitHub Enterprise Server)
+    default: ${{ github.api_url }}
+
+outputs:
+  findings:
+    description: Number of findings
+    value: ${{ steps.review.outputs.findings }}
+  blocking:
+    description: Number of critical + major findings
+    value: ${{ steps.review.outputs.blocking }}
+  report:
+    description: Path to the Markdown report
+    value: ${{ steps.review.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+    - name: Build Local Code Review CLI
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/action/build.sh"'
+    - name: Review pull request
+      id: review
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/action/run.sh"'
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        LCR_GITHUB_API_URL: ${{ inputs.github-api-url }}
+        LCR_BASE_URL: ${{ inputs.base-url }}
+        LCR_MODEL: ${{ inputs.model }}
+        LCR_API_KEY: ${{ inputs.api-key }}
+        LCR_PROVIDER: ${{ inputs.provider }}
+        LCR_EXTRA_HEADERS: ${{ inputs.extra-headers }}
+        LCR_EXTRA_BODY: ${{ inputs.extra-body }}
+        LCR_JSON_MODE: ${{ inputs.json-mode }}
+        LCR_MIN_SEVERITY: ${{ inputs.min-severity }}
+        LCR_MAX_CHUNK_CHARS: ${{ inputs.max-chunk-chars }}
+        LCR_MAX_OUTPUT_TOKENS: ${{ inputs.max-output-tokens }}
+        LCR_CONCURRENCY: ${{ inputs.concurrency }}
+        LCR_TIMEOUT_SECONDS: ${{ inputs.timeout-seconds }}
+        LCR_EXTRA_INSTRUCTIONS: ${{ inputs.extra-instructions }}
+        INPUT_PR_NUMBER: ${{ inputs.pr-number }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_REVIEW_EVENT: ${{ inputs.review-event }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}

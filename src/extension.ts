@@ -15,6 +15,7 @@ import {
   webHostFromApiUrl,
 } from './github';
 import { JsonMode, LlmClient, LlmConfig } from './llm';
+import { loadPullRequest } from './pr';
 import { renderMarkdownReport, ReportMeta } from './report';
 import { CancelledError, runReview } from './review';
 import { Logger, ReviewResult, Severity } from './types';
@@ -452,16 +453,7 @@ class Controller {
 
     const out = await this.withReviewProgress(`Local Code Review: ${label}`, async (signal, report) => {
       report('Fetching pull request…');
-      const pr = await gh.getPull(ref.repo, ref.number);
-      const { files, skipped } = await gh.getPullFiles(ref.repo, ref.number);
-      let repoInstructions: string | undefined;
-      if (s.instructionsFile) {
-        repoInstructions = await gh.getFileContent(ref.repo, s.instructionsFile, pr.baseSha).catch(() => undefined);
-        if (repoInstructions) {
-          this.log.info(`Using review guidelines from ${s.instructionsFile}@${pr.baseRef}`);
-          if (repoInstructions.length > 8000) repoInstructions = repoInstructions.slice(0, 8000) + '\n…[truncated]';
-        }
-      }
+      const { pr, files, skipped, repoInstructions } = await loadPullRequest(gh, ref.repo, ref.number, s.instructionsFile, this.logger);
       const result = await runReview(files, {
         llm,
         maxChunkChars: s.maxChunkChars,

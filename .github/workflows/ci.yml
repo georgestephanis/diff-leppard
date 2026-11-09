@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run package
+
+  action-smoke:
+    # Runs the GitHub Action from this checkout against a mock LLM server and the closed demo PR (#1), without posting.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node test/fixtures/mock-openai.js 8765 &
+      - id: lcr
+        uses: ./
+        with:
+          base-url: http://127.0.0.1:8765/v1
+          pr-number: "1"
+          repository: georgestephanis/local-code-review-vscode
+          review-event: none
+      - name: Check outputs
+        run: |
+          echo "findings=${{ steps.lcr.outputs.findings }}"
+          test "${{ steps.lcr.outputs.findings }}" = "1"
+          grep -q "Mock finding" "${{ steps.lcr.outputs.report }}"

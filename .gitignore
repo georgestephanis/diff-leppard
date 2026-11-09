@@ -3,3 +3,4 @@ out/
 *.vsix
 conversation-log.jsonl
 .vscode-test/
+.serena/

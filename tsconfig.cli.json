@@ -1,0 +1,7 @@
+{
+  // Builds only the CLI (no VS Code types needed). Used by the GitHub Action.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "types": ["node"], "sourceMap": false },
+  "include": [],
+  "files": ["src/cli.ts"]
+}

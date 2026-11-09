@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# gh extension: `gh local-review [<pr>|local|staged|models|test|config] [options]`
+# Reviews GitHub PRs (or local changes) with your self-hosted LLM via the local-code-review CLI.
+#
+# Install from a clone of this repo:   npm install && cd gh-local-review && gh extension install .
+# Or put `local-code-review` on PATH:  npm install -g github:georgestephanis/local-code-review-vscode
+set -euo pipefail
+
+if [[ -n "${LOCAL_CODE_REVIEW_BIN:-}" ]]; then
+  exec "$LOCAL_CODE_REVIEW_BIN" "$@"
+fi
+
+# Resolve this script's real location (gh installs local extensions as a symlink).
+src="${BASH_SOURCE[0]}"
+while [[ -L "$src" ]]; do
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  src="$(readlink "$src")"
+  [[ "$src" != /* ]] && src="$dir/$src"
+done
+here="$(cd -P "$(dirname "$src")" && pwd)"
+cli="$here/../out/src/cli.js"
+
+if [[ -f "$cli" ]]; then
+  exec node "$cli" "$@"
+elif command -v local-code-review >/dev/null 2>&1; then
+  exec local-code-review "$@"
+else
+  echo "gh local-review: the CLI isn't built. Run 'npm install' in $(cd "$here/.." && pwd)," >&2
+  echo "or install it globally: npm install -g github:georgestephanis/local-code-review-vscode" >&2
+  exit 2
+fi
