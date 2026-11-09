@@ -4,3 +4,4 @@ out/
 conversation-log.jsonl
 .vscode-test/
 .serena/
+doc/tags

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Neovim plugin.** The repo is also a Neovim plugin (0.10+): `:DiffLeppard`, `:DiffLeppardStaged` and `:DiffLeppardPR` run the CLI in the background and show findings as diagnostics and in the quickfix list. It uses the CLI's config, so there are no settings to duplicate. `:checkhealth diff-leppard` checks the setup. Install with lazy.nvim: `{ "georgestephanis/diff-leppard", opts = {} }`.
+
 ## 1.2.0 (2026-11-09)
 
 - **`diff-leppard watch`** reviews the PRs that request your review, across every repo you can access, with no per-repo setup. Each one gets a **pending (draft) review** to edit and submit as yourself, once per commit. It only makes outbound calls to GitHub, so the model server never has to be reachable from the internet. Run it with `--once` from cron or a timer, or long-running using the systemd and launchd files in `docs/watch/`. Settings go in a `watch` block in the user config. `--dry-run` shows what it would review.

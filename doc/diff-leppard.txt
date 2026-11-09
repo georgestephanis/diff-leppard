@@ -1,0 +1,71 @@
+*diff-leppard.txt*  AI code review with your own model server
+
+Diff Leppard reviews your changes with a model server you run (vLLM, Ollama,
+LM Studio, llama.cpp, any OpenAI-compatible API) and shows the findings as
+diagnostics and in the quickfix list. The plugin runs the `diff-leppard` CLI;
+the model server, API key and review preferences come from the CLI's config
+(~/.config/diff-leppard/config.json), so there's nothing to set up twice.
+
+Requires Neovim 0.10+ and the CLI:
+>sh
+  npm install -g https://github.com/georgestephanis/diff-leppard/releases/latest/download/diff-leppard.tgz
+<
+Check the setup with |:checkhealth| diff-leppard.
+
+==============================================================================
+COMMANDS                                               *diff-leppard-commands*
+
+:DiffLeppard [args]                                             *:DiffLeppard*
+    Review uncommitted changes, including untracked files. Extra arguments
+    go to `diff-leppard local`, e.g. `:DiffLeppard --base main` reviews the
+    whole branch, `:DiffLeppard --range origin/main..HEAD` exact commits.
+
+:DiffLeppardStaged                                        *:DiffLeppardStaged*
+    Review staged changes only.
+
+:DiffLeppardPR [pr]                                           *:DiffLeppardPR*
+    Review a GitHub PR: a number, URL or owner/repo#n. With no argument,
+    the PR for the current branch. Read-only; nothing is posted.
+
+:DiffLeppardCancel                                        *:DiffLeppardCancel*
+    Stop the running review.
+
+:DiffLeppardClear                                          *:DiffLeppardClear*
+    Remove the findings from diagnostics and the quickfix list.
+
+:DiffLeppardShow                                            *:DiffLeppardShow*
+    Show the last review's findings again.
+
+Reviews run in the background; one at a time.
+
+==============================================================================
+SETUP                                                     *diff-leppard-setup*
+
+Optional. The defaults:
+>lua
+  require("diff-leppard").setup({
+    cmd = { "diff-leppard" },     -- or { "npx", "diff-leppard" }, { "node", "/path/dist/cli.js" }
+    args = {},                    -- extra CLI args for every review, e.g. { "--model", "x" }
+    diagnostics = true,           -- findings as vim.diagnostic entries
+    quickfix = true,              -- findings in the quickfix list
+    open_quickfix = true,         -- open it when there are findings
+    minimum_severity = "nit",     -- "critical" | "major" | "minor" | "nit"
+  })
+<
+Severities map to diagnostics as: critical and major → ERROR, minor → WARN,
+nit → HINT. Diagnostics use the source "diff-leppard" and the namespace in
+`require("diff-leppard").ns`.
+
+The last result is in `require("diff-leppard").last` (the CLI's JSON
+ReviewResult), if you want to build on it.
+
+==============================================================================
+NOTES                                                     *diff-leppard-notes*
+
+Findings are suggestions from a model. Check them before acting on them.
+
+Model server problems (unreachable, 401, slow, unparseable output): run
+`diff-leppard test` and `diff-leppard config` in a terminal, and see the
+troubleshooting section of https://github.com/georgestephanis/diff-leppard
+
+ vim:tw=78:ts=8:ft=help:norl:

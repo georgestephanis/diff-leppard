@@ -14,6 +14,7 @@ It reviews **uncommitted or staged changes** or a **GitHub pull request**. It ca
 | 🤖 **GitHub Action** | Automatic reviews on PRs in any repo, or on demand with `/review` | [↓](#github-action) |
 | 👀 **`diff-leppard watch`** | Automatic draft reviews for every PR that requests your review, in any repo, from your own machine | [↓](#watch-automatic-reviews-across-all-your-repos) |
 | 🪝 **pre-commit hook** | Review staged changes before commit, or pushed commits before push | [↓](#pre-commit) |
+| 🌙 **Neovim plugin** | Findings as diagnostics and in the quickfix list, from `:DiffLeppard` | [↓](#neovim) |
 | ✳️ **Claude Code plugin** | Claude sets up and runs Diff Leppard for you, and gets a second opinion from your model on its own work | [↓](#claude-code-plugin) |
 
 All of them share the same review engine, prompt and settings.
@@ -281,6 +282,24 @@ repos:
 ```
 
 It uses your normal config (`~/.config/diff-leppard/config.json` or `DIFF_LEPPARD_*`). Run it on demand with `pre-commit run diff-leppard --hook-stage manual`. Outside pre-commit, `diff-leppard hook` does the same thing.
+
+## Neovim
+
+This repo is also a Neovim plugin (0.10+). It runs the CLI, so install that first and configure the model server in `~/.config/diff-leppard/config.json`; the plugin has no server settings of its own.
+
+```lua
+-- lazy.nvim
+{ "georgestephanis/diff-leppard", cmd = { "DiffLeppard", "DiffLeppardStaged", "DiffLeppardPR" }, opts = {} }
+```
+
+| Command | Reviews |
+| --- | --- |
+| `:DiffLeppard [args]` | Uncommitted changes. Extra args go to `diff-leppard local`, e.g. `:DiffLeppard --base main` |
+| `:DiffLeppardStaged` | Staged changes |
+| `:DiffLeppardPR [pr]` | A GitHub PR (read-only); with no argument, this branch's PR |
+| `:DiffLeppardCancel`, `:DiffLeppardClear`, `:DiffLeppardShow` | Stop the review, clear findings, show the last ones again |
+
+Reviews run in the background. Findings show up as diagnostics (critical and major as errors, minor as warnings, nits as hints) and in the quickfix list. `:checkhealth diff-leppard` checks the CLI and the model server, and `:help diff-leppard` lists the `setup()` options (`cmd`, `args`, `minimum_severity`, …).
 
 ## Claude Code plugin
 
