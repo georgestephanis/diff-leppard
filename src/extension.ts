@@ -424,7 +424,7 @@ class Controller {
 
     const meta: ReportMeta = {
       title: `Review of ${what} — ${path.basename(root)}`,
-      source: `${stagedOnly ? 'Staged' : 'Uncommitted'} changes in \`${root}\``,
+      source: `${stagedOnly ? 'Staged' : 'Uncommitted'} changes in **${path.basename(root)}**`,
       repoRoot: root,
     };
     this.setDiagnostics(result, root);
@@ -554,6 +554,7 @@ class Controller {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const slug = meta.title.replace(/[^\w-]+/g, '-').replace(/-+/g, '-').slice(0, 60);
     const reportUri = vscode.Uri.joinPath(dir, `${stamp}-${slug}.md`);
+    meta.reportDir = dir.fsPath;
     await vscode.workspace.fs.writeFile(reportUri, Buffer.from(renderMarkdownReport(result, meta), 'utf8'));
     this.last = { result, meta, reportUri, pr };
     await vscode.commands.executeCommand('setContext', 'localCodeReview.hasReview', true);
@@ -568,7 +569,7 @@ class Controller {
 
   async openReport(): Promise<void> {
     if (!this.last) return;
-    await vscode.commands.executeCommand('markdown.showPreview', this.last.reportUri);
+    await vscode.commands.executeCommand('markdown.showPreviewToSide', this.last.reportUri);
   }
 
   private setDiagnostics(result: ReviewResult, root: string): void {

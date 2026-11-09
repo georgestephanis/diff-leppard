@@ -1,5 +1,4 @@
 import * as path from 'path';
-import { pathToFileURL } from 'url';
 import { ReviewResult, Severity } from './types';
 
 const ICON: Record<Severity, string> = { critical: '🔴', major: '🟠', minor: '🟡', nit: '⚪' };
@@ -9,6 +8,8 @@ export interface ReportMeta {
   source: string;
   /** When set, file references link to local files. */
   repoRoot?: string;
+  /** Directory the report is written to. Local links are relative to it (the markdown preview blocks file: URLs). */
+  reportDir?: string;
   /** When set (PR reviews), file references link to the PR's files on GitHub. */
   blobBaseUrl?: string;
   postedUrl?: string;
@@ -22,8 +23,9 @@ function fence(code: string): string {
 
 function link(file: string, line: number | undefined, meta: ReportMeta): string {
   const label = line ? `${file}:${line}` : file;
-  if (meta.repoRoot) {
-    const url = pathToFileURL(path.join(meta.repoRoot, file)).toString() + (line ? `#L${line}` : '');
+  if (meta.repoRoot && meta.reportDir) {
+    const rel = path.relative(meta.reportDir, path.join(meta.repoRoot, file));
+    const url = rel.split(path.sep).map(encodeURIComponent).join('/') + (line ? `#L${line}` : '');
     return `[\`${label}\`](${url})`;
   }
   if (meta.blobBaseUrl) {

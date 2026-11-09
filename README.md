@@ -6,6 +6,37 @@ AI code review using **your own model server**: vLLM, Ollama, LM Studio, llama.c
 - **Review a GitHub pull request** by picking from the repo's open PRs or pasting a number or URL.
 - **Post the result as a real GitHub PR review.** Comments go inline on the changed lines, with a summary in the review body. You can submit it right away, request changes when there are blocking findings, or create a **pending (draft) review** so you can delete bad comments before submitting it yourself.
 
+## Screenshots
+
+**Reviewing uncommitted changes.** Findings show up as diagnostics, in the Problems panel, and in a report beside your code:
+
+![Review of uncommitted changes with findings in the editor, Problems panel and report](docs/screenshots/local-review.png)
+
+**Posting to a pull request.** The review lands on GitHub with a summary and inline comments on the changed lines. See it live on [demo PR #1](https://github.com/georgestephanis/local-code-review-vscode/pull/1); every finding there came from a self-hosted 27B model via vLLM.
+
+![GitHub PR review posted by the extension, with inline comments](docs/screenshots/github-review.png)
+
+<details>
+<summary>More screenshots</summary>
+
+The PR report after posting:
+
+![PR review report with a "Review posted" notification](docs/screenshots/pr-report.png)
+
+Progress while the model is working (cancellable):
+
+![Progress notification during a review](docs/screenshots/progress.png)
+
+The status bar **Review** menu:
+
+![Quick menu](docs/screenshots/menu.png)
+
+Settings:
+
+![Extension settings](docs/screenshots/settings.png)
+
+</details>
+
 ## Install
 
 ```bash
