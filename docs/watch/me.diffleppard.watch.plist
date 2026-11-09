@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent for `diff-leppard watch` (macOS).
+
+    cp me.diffleppard.watch.plist ~/Library/LaunchAgents/
+    # Edit the two paths below: node (`command -v node`) and the CLI (`command -v diff-leppard`),
+    # and set GH_TOKEN (or remove it to use `gh auth token`).
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/me.diffleppard.watch.plist
+    tail -f /tmp/diff-leppard-watch.log
+
+  Stop with: launchctl bootout gui/$(id -u)/me.diffleppard.watch
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>me.diffleppard.watch</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/opt/homebrew/bin/diff-leppard</string>
+    <string>watch</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>GH_TOKEN</key><string>REPLACE_ME</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>60</integer>
+  <key>StandardErrorPath</key><string>/tmp/diff-leppard-watch.log</string>
+  <key>StandardOutPath</key><string>/tmp/diff-leppard-watch.log</string>
+</dict>
+</plist>
