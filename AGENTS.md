@@ -30,6 +30,7 @@ It can also post the result back to the PR as a GitHub review with inline commen
 | `src/pr.ts` | Load a PR's files + review guidelines (shared by extension and CLI) | no |
 | `src/config.ts` | CLI config: defaults < user file < repo `.diff-leppard.json` < `DIFF_LEPPARD_*` env < flags | no |
 | `src/format.ts` | Terminal (ANSI) rendering of results | no |
+| `src/formats.ts` | SARIF 2.1.0 and reviewdog rdjson output (validated against the official schemas) | no |
 | `src/flow.ts` | Shared review flows: `reviewPullRequest` (base-branch repo config → load → size → review), `makeLlm` | no |
 | `src/watch.ts` | `diff-leppard watch`: GitHub search for PRs wanting your review, state file, lock, once-per-commit, posting | no |
 | `src/cli.ts` | CLI entry (`diff-leppard`, `gh diff-leppard`): arg parsing, posting prompt, exit codes | no |

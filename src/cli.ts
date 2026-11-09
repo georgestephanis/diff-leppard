@@ -12,6 +12,7 @@ import { parseArgs } from 'util';
 import { CliSettings, loadConfig, parseJsonc, readRepoConfig, REPO_CONFIG_FILE, REPO_CONFIG_KEYS, RepoConfigInput, userConfigPath } from './config';
 import { makeExcluder } from './diff';
 import { renderTerminal } from './format';
+import { toRdjson, toSarif } from './formats';
 import { ghExec, githubRemotes, githubTokenFor } from './gh';
 import { getLocalDiff, getRepoRoot, git as gitText, readRepoFile } from './git';
 import { GitHubClient, parsePrReference, postReview, PullRequestInfo, RepoRef, ReviewEventSetting, webHostFromApiUrl } from './github';
@@ -48,8 +49,10 @@ Posting (PR reviews):
       --no-prompt           Never ask whether to post (default: ask when running in a terminal)
 
 Output:
-  -f, --format <fmt>        text | markdown | json   (default: text in a terminal, markdown when piped)
-  -o, --output <file>       Also write the report to a file (.json for JSON, otherwise Markdown)
+  -f, --format <fmt>        text | markdown | json | sarif | rdjson   (default: text in a terminal, markdown when piped)
+                            sarif: GitHub code scanning and other SARIF tools; rdjson: reviewdog (GitLab, Gitea, …)
+  -o, --output <file>       Also write the report to a file; repeatable. The format follows the extension:
+                            .json, .sarif, .rdjson (or .rdjsonl), otherwise Markdown
       --fail-on <severity>  Exit with code 1 if any finding is at or above this severity (for CI)
   -q, --quiet               No progress output
   -v, --verbose             Log requests and decisions to stderr (DIFF_LEPPARD_DEBUG=1 adds prompts and raw model output)
@@ -195,7 +198,7 @@ export async function main(argv: string[]): Promise<number> {
       draft: { type: 'boolean' },
       'no-prompt': { type: 'boolean' },
       format: { type: 'string', short: 'f' },
-      output: { type: 'string', short: 'o' },
+      output: { type: 'string', short: 'o', multiple: true },
       'fail-on': { type: 'string' },
       quiet: { type: 'boolean', short: 'q' },
       verbose: { type: 'boolean', short: 'v' },
@@ -408,7 +411,7 @@ export async function main(argv: string[]): Promise<number> {
   const failOn = o['fail-on'] as Severity | undefined;
   if (failOn && !SEVERITIES.includes(failOn)) throw new UsageError(`--fail-on must be one of ${SEVERITIES.join(', ')}`);
   const format = o.format ?? (isTTY(process.stdout) ? 'text' : 'markdown');
-  if (!['text', 'markdown', 'json'].includes(format)) throw new UsageError('--format must be text, markdown or json');
+  if (!['text', 'markdown', 'json', 'sarif', 'rdjson'].includes(format)) throw new UsageError('--format must be text, markdown, json, sarif or rdjson');
   const exclude = makeExcluder(s.excludeGlobs);
   const reviewOpts = {
     maxChunkChars: s.maxChunkChars,
@@ -520,12 +523,19 @@ export async function main(argv: string[]): Promise<number> {
   progress.clear();
 
   // Output
-  if (format === 'json') process.stdout.write(JSON.stringify(result, null, 2) + '\n');
-  else if (format === 'markdown') process.stdout.write(markdown());
-  else process.stdout.write(renderTerminal(result, { color: useColor(process.stdout), title }));
-  if (o.output) {
-    await fs.writeFile(o.output, o.output.endsWith('.json') ? JSON.stringify(result, null, 2) : markdown());
-    log.info(`wrote ${o.output}`);
+  const render = (fmt: string): string => {
+    if (fmt === 'json') return JSON.stringify(result, null, 2) + '\n';
+    if (fmt === 'sarif') return JSON.stringify(toSarif(result, packageVersion()), null, 2) + '\n';
+    if (fmt === 'rdjson') return JSON.stringify(toRdjson(result)) + '\n';
+    if (fmt === 'markdown') return markdown();
+    return renderTerminal(result, { color: useColor(process.stdout), title });
+  };
+  process.stdout.write(render(format));
+  for (const file of o.output ?? []) {
+    const ext = path.extname(file).toLowerCase();
+    const fmt = ext === '.json' ? 'json' : ext === '.sarif' ? 'sarif' : ext === '.rdjson' || ext === '.rdjsonl' ? 'rdjson' : 'markdown';
+    await fs.writeFile(file, render(fmt));
+    log.info(`wrote ${file} (${fmt})`);
   }
 
   // Posting

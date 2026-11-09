@@ -48,6 +48,7 @@ Rules:
 - Think before you write, but put only your conclusion in the JSON: no step-by-step tracing, "wait", or self-corrections in a body.
 - If, on reflection, something turns out to be correct, intentional, or "probably fine", leave it out entirely. Never report a finding whose conclusion is that no change is needed.
 - Respect deliberate design decisions that the code or comments explain; only flag them if they are actually wrong.
+- The summary must agree with your findings: don't describe a problem in the summary that you didn't report as a finding, and don't claim something is broken without a finding that shows where.
 - You only see part of the code base. Do not report "X is not defined" when X could plausibly be defined elsewhere.
 
 Diff format: each file starts with "=== File: <path> (<status>) ===", followed by hunks.
