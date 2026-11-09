@@ -79,7 +79,7 @@ export function defaultSettings(): CliSettings {
     ollamaNumCtx: 16384,
     extraHeaders: {},
     extraBody: {},
-    maxChunkChars: 24000,
+    maxChunkChars: 0, // 0 = auto: size to the model's context window
     contextLines: 5,
     includeUntracked: true,
     minimumSeverity: 'minor',
@@ -280,7 +280,8 @@ function validate(s: CliSettings): void {
   oneOf('jsonMode', s.jsonMode, ['json_object', 'json_schema', 'none']);
   oneOf('minimumSeverity', s.minimumSeverity, SEVERITIES);
   oneOf('github.reviewEvent', s.github.reviewEvent, ['COMMENT', 'REQUEST_CHANGES_IF_BLOCKING', 'PENDING']);
-  int('maxChunkChars', 1000);
+  int('maxChunkChars', 0);
+  if (s.maxChunkChars > 0 && s.maxChunkChars < 1000) throw new Error(`maxChunkChars must be 0 (auto) or at least 1000 (got ${s.maxChunkChars})`);
   int('concurrency', 1, 64);
   int('maxOutputTokens', 16);
   int('requestTimeoutSeconds', 1);

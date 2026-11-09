@@ -3,7 +3,7 @@ import http from 'node:http';
 import { AddressInfo } from 'node:net';
 import { after, before, test } from 'node:test';
 import { parseUnifiedDiff } from '../src/diff';
-import { LlmClient, LlmConfig } from '../src/llm';
+import { FALLBACK_CHUNK_CHARS, LlmClient, LlmConfig, MAX_AUTO_CHUNK_CHARS, resolveChunkChars } from '../src/llm';
 import { runReview } from '../src/review';
 import { nullLogger } from '../src/types';
 
@@ -25,7 +25,7 @@ before(async () => {
       requests.push({ url: req.url, auth: req.headers.authorization, body: json });
       if (req.url === '/v1/models') {
         res.setHeader('content-type', 'application/json');
-        return res.end(JSON.stringify({ data: [{ id: 'm1' }, { id: 'm2' }] }));
+        return res.end(JSON.stringify({ data: [{ id: 'm1', max_model_len: 32768 }, { id: 'm2' }, { id: 'tiny', context_window: 4096 }] }));
       }
       if (req.url === '/api/tags') {
         res.setHeader('content-type', 'application/json');
@@ -82,7 +82,7 @@ const cfg = (over: Partial<LlmConfig> = {}): LlmConfig => ({
 
 test('openai: list models, streaming, api key, response_format', async () => {
   const c = new LlmClient(cfg({ apiKey: 'sekrit' }));
-  assert.deepEqual(await c.listModels(), ['m1', 'm2']);
+  assert.deepEqual(await c.listModels(), ['m1', 'm2', 'tiny']);
   let progress = 0;
   const r = await c.chat([{ role: 'user', content: 'hi' }], { onProgress: (n) => (progress = n) });
   assert.ok(r.content.endsWith(JSON.stringify(REVIEW)));
@@ -174,4 +174,16 @@ test('generic server errors do not switch off structured output', async () => {
   const before = requests.length;
   await assert.rejects(c.chat([{ role: 'user', content: 'x' }]), /500/);
   assert.equal(requests.length - before, 1, 'no retry without response_format');
+});
+
+test('auto chunk size follows the reported context window', async () => {
+  assert.equal(await resolveChunkChars(new LlmClient(cfg({ model: 'm1' })), 0, 4096, nullLogger), (32768 - 4096 - 1500) * 3);
+  assert.equal(await resolveChunkChars(new LlmClient(cfg({ model: 'm2' })), 0, 4096, nullLogger), FALLBACK_CHUNK_CHARS);
+  assert.equal(await resolveChunkChars(new LlmClient(cfg({ model: 'tiny' })), 0, 4096, nullLogger), 2000, 'no room left → minimum');
+  assert.equal(await resolveChunkChars(new LlmClient(cfg({ model: 'm1' })), 12345, 4096, nullLogger), 12345, 'explicit wins');
+  assert.equal(
+    await resolveChunkChars(new LlmClient(cfg({ provider: 'ollama', baseUrl: base, ollamaNumCtx: 131072 })), 0, 4096, nullLogger),
+    MAX_AUTO_CHUNK_CHARS,
+  );
+  assert.equal(await resolveChunkChars(new LlmClient(cfg({ baseUrl: 'http://127.0.0.1:65531/v1' })), 0, 4096, nullLogger), FALLBACK_CHUNK_CHARS);
 });

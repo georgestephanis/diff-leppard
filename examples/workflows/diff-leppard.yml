@@ -79,6 +79,6 @@ jobs:
           review-event: comment          # comment | request-changes | none
           min-severity: minor
           # fail-on: critical            # make the check fail on critical findings
-          # max-chunk-chars: 60000       # ~32k-token context
+          # max-chunk-chars: 60000       # default: auto-sized to the model's context window
           # extra-body: '{"chat_template_kwargs": {"enable_thinking": false}}'   # Qwen3-style models on vLLM: much faster
           # extra-instructions: "This is a WordPress plugin: flag unescaped output and missing nonce checks."

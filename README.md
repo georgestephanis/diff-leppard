@@ -43,7 +43,7 @@ Set `model` to the name the server knows. If you leave it empty and the server h
 | API key | *Set LLM API Key* command (secret storage) | `apiKey` | `DIFF_LEPPARD_API_KEY` | `api-key` |
 | Extra request fields | `diffLeppard.extraBody` | `extraBody` | `DIFF_LEPPARD_EXTRA_BODY` | `extra-body` |
 | Extra headers | `diffLeppard.extraHeaders` | `extraHeaders` | `DIFF_LEPPARD_EXTRA_HEADERS` | `extra-headers` |
-| Diff chars per request | `diffLeppard.maxChunkChars` | `maxChunkChars` | `DIFF_LEPPARD_MAX_CHUNK_CHARS` | `max-chunk-chars` |
+| Diff chars per request (default: auto) | `diffLeppard.maxChunkChars` | `maxChunkChars` | `DIFF_LEPPARD_MAX_CHUNK_CHARS` | `max-chunk-chars` |
 
 The full list is in [Settings reference](#settings-reference).
 
@@ -51,14 +51,16 @@ The full list is in [Settings reference](#settings-reference).
 
 The bigger and more code-focused the model, the better the review. A ~3B model mostly produces noise. 14B+ code or instruct models (Qwen2.5-Coder 14B/32B, Qwen3-Coder, Devstral, gpt-oss and so on) give useful results.
 
-Large diffs are split into chunks of `maxChunkChars` characters (about 3.5 characters per token). Size the chunk to the context window minus `maxOutputTokens` minus roughly 1.5k tokens for the prompt:
+Large diffs are split into chunks, and by default **the chunk size is automatic**. Diff Leppard reads the model's context window from the server: vLLM's `max_model_len`, or `context_window` / `context_length` on others, and `ollamaNumCtx` for the native Ollama provider. It subtracts `maxOutputTokens` and the prompt, at about 3 characters per token, and caps chunks at 100,000 characters, because models review worse on huge prompts. If the server doesn't report a context window it uses 24,000 characters.
+
+To size chunks yourself, set `maxChunkChars`. Roughly: (context window − `maxOutputTokens` − 1.5k) × 3.
 
 | Context window | `maxChunkChars` |
 | --- | --- |
 | 8k | 8000 |
-| 16k (default) | 24000 |
+| 16k | 24000 |
 | 32k | 60000 |
-| 128k | 300000 |
+| 128k | 100000 |
 
 **Ollama:** Ollama silently truncates prompts longer than its context window, which is small by default. Use `provider: "ollama"` so Diff Leppard can set `num_ctx` (`ollamaNumCtx`), or start Ollama with `OLLAMA_CONTEXT_LENGTH=16384`.
 
@@ -89,7 +91,6 @@ Next, open **Settings → Extensions → Diff Leppard** and run **Diff Leppard: 
 {
   "diffLeppard.baseUrl": "http://gpu-box:8000/v1",
   "diffLeppard.model": "Qwen/Qwen2.5-Coder-32B-Instruct",
-  "diffLeppard.maxChunkChars": 60000,   // fits a 32k-context model
   "diffLeppard.concurrency": 2,         // vLLM batches concurrent requests well
   "diffLeppard.extraBody": { "chat_template_kwargs": { "enable_thinking": false } }
 }
@@ -157,8 +158,7 @@ Settings are read in this order, each overriding the one before:
   "baseUrl": "http://gpu-box:8000/v1",
   "model": "Qwen/Qwen2.5-Coder-32B-Instruct",
   "apiKey": "…",
-  "extraBody": { "chat_template_kwargs": { "enable_thinking": false } },
-  "maxChunkChars": 60000
+  "extraBody": { "chat_template_kwargs": { "enable_thinking": false } }
 }
 ```
 
@@ -272,7 +272,7 @@ The names below are CLI config keys:
 | `concurrency` | `1` | Parallel requests (2–4 is fine on vLLM) |
 | `ollamaNumCtx` | `16384` | |
 | `extraHeaders`, `extraBody` | `{}` | Merged into every request |
-| `maxChunkChars` | `24000` | See [sizing](#picking-a-model-and-sizing-the-context) |
+| `maxChunkChars` | `0` (auto) | Sized to the model's context window; see [sizing](#picking-a-model-and-sizing-the-context) |
 | `contextLines` | `5` | Context lines in local diffs |
 | `includeUntracked` | `true` | |
 | `minimumSeverity` | `minor` | `critical`, `major`, `minor` or `nit` |
@@ -286,7 +286,8 @@ The names below are CLI config keys:
 - **"Could not reach …"**: check `baseUrl`. OpenAI-compatible servers need the `/v1` suffix. Try `curl <baseUrl>/models`.
 - **"Model did not return parseable JSON"**: the model ignored the format. Try `jsonMode: json_schema` (vLLM, recent Ollama, LM Studio), a stronger model, or a lower temperature. Check the debug log for the raw reply: the VS Code output channel at Debug level, or `DIFF_LEPPARD_DEBUG=1` for the CLI.
 - **Output cut off**: raise `maxOutputTokens`. Diff Leppard salvages complete findings from cut-off JSON, but it logs a warning.
-- **Slow or timing out**: turn off thinking (see [Reasoning models](#picking-a-model-and-sizing-the-context)), lower `maxChunkChars`, or raise `requestTimeoutSeconds`.
+- **Slow or timing out**: turn off thinking (see [Reasoning models](#picking-a-model-and-sizing-the-context)), set a smaller `maxChunkChars`, or raise `requestTimeoutSeconds`.
+- **"Prompt too long" / context-length errors**: the server's reported context is larger than what it actually serves (or `maxOutputTokens` is high). Set `maxChunkChars` explicitly.
 
 ## Contributing
 

@@ -63,6 +63,5 @@ jobs:
           review-event: comment          # comment | request-changes | none
           min-severity: minor
           # fail-on: critical            # make the check fail on critical findings
-          max-chunk-chars: 60000
           extra-body: '{"chat_template_kwargs": {"enable_thinking": false}}'
           # extra-instructions: "This is a WordPress plugin: flag unescaped output and missing nonce checks."
