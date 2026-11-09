@@ -1,9 +1,15 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 (2026-11-09)
 
-- **Release automation:** pushing a `vX.Y.Z` tag tests the code, builds the `.vsix` and CLI tarball, and opens a draft release with notes from this changelog. Publishing the draft publishes to npm, Open VSX and the VS Code Marketplace, syncs the `gh-diff-leppard` repo and moves the `vX` tag. Each of those runs only if its secret is set, and publishing as a pre-release keeps the release quiet. See `docs/RELEASING.md`.
+- **`diff-leppard watch`** reviews the PRs that request your review, across every repo you can access, with no per-repo setup. Each one gets a **pending (draft) review** to edit and submit as yourself, once per commit. It only makes outbound calls to GitHub, so the model server never has to be reachable from the internet. Run it with `--once` from cron or a timer, or long-running using the systemd and launchd files in `docs/watch/`. Settings go in a `watch` block in the user config. `--dry-run` shows what it would review.
+- **SARIF and reviewdog output:**
+  - `-f sarif` writes SARIF 2.1.0 for GitHub code scanning, IDEs and dashboards, with stable fingerprints, security-severity scores and fixes from suggestions.
+  - `-f rdjson` writes reviewdog's format, so reviewdog can post findings to GitLab, Bitbucket, Gitea or Gerrit.
+  - `-o` can be repeated and picks the format from the file extension.
+  - The Action always writes SARIF and exposes it as the `sarif` output.
 - **Runaway replies are stopped early.** Models sometimes get stuck emitting the same thing over and over: a run of whitespace in JSON mode, or the same finding again and again. Diff Leppard used to wait for `maxOutputTokens`, which kept the GPU busy for minutes (one real case: 9 minutes at 15 tokens/s, for a 400-token review). It now spots the loop as it streams, hangs up so the server stops generating, keeps one copy of what was repeated, and salvages the findings. If nothing parses, it asks once more and tells the model it was repeating itself. Loops in a reasoning stream are caught too. This needs `stream: true`, which is the default.
+- **Release automation (for maintainers):** pushing a `vX.Y.Z` tag tests the code, builds the `.vsix` and CLI tarball, and opens a draft release with notes from this changelog. Publishing the draft publishes to npm, Open VSX and the VS Code Marketplace, syncs the `gh-diff-leppard` repo and moves the `vX` tag. Each of those runs only if its secret is set, and publishing as a pre-release keeps the release quiet. See `docs/RELEASING.md`.
 
 ## 1.1.0 (2026-11-09)
 
