@@ -78,9 +78,9 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-node@v4
+    - uses: actions/setup-node@v5
       with:
-        node-version: "20"
+        node-version: "22"
     - name: Build Local Code Review CLI
       shell: bash
       run: '"$GITHUB_ACTION_PATH/action/build.sh"'

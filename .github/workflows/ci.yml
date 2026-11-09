@@ -14,10 +14,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npm test
@@ -27,7 +27,7 @@ jobs:
     # Runs the GitHub Action from this checkout against a mock LLM server and the closed demo PR (#1), without posting.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: node test/fixtures/mock-openai.js 8765 &
       - id: lcr
         uses: ./
