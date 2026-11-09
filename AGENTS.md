@@ -25,6 +25,8 @@ It can also post the result back to the PR as a GitHub review with inline commen
 | `src/git.ts` | `git` subprocess helpers, local diffs, untracked files | no |
 | `src/github.ts` | GitHub REST client, PR/remote URL parsing, review payload + posting with fallbacks | no |
 | `src/report.ts` | Markdown report rendering | no |
+| `src/markdown.ts` | `fence`, severity counts, `sanitizeText` (strips control chars from model output) | no |
+| `src/gh.ts` | `gh` CLI lookup, host-scoped GitHub tokens, GitHub remotes (shared by extension and CLI) | no |
 | `src/pr.ts` | Load a PR's files + review guidelines (shared by extension and CLI) | no |
 | `src/config.ts` | CLI config: defaults < user file < repo `.diff-leppard.json` < `DIFF_LEPPARD_*` env < flags | no |
 | `src/format.ts` | Terminal (ANSI) rendering of results | no |
@@ -68,6 +70,16 @@ Run `npm test` before you finish any change. Anything imported by `src/cli.ts` m
 - **Settings** live under `diffLeppard.*` in `package.json` `contributes.configuration`. Read them only in `readSettings()` in `extension.ts`. Give new settings sensible defaults and a description.
 - **Secrets:** the LLM API key is stored in VS Code `SecretStorage` (`Set LLM API Key`). Users may also pass auth through `diffLeppard.extraHeaders`. Never log keys or tokens. Debug logs may contain prompts and model output.
 - **Prompt changes** (`src/prompt.ts`) change review quality for every model. Test them against a real model when you can. A ~3B model is not a meaningful quality signal; use a 14B+ coder or instruct model.
+
+## Security model (keep it this way)
+
+- **Repo-controlled input is untrusted.** That covers `.diff-leppard.json`, `.vscode/settings.json` and anything in a PR.
+  - Repo config is filtered to `REPO_CONFIG_KEYS` in `config.ts`. Nothing that sets where requests go, credentials, headers, request bodies or GitHub settings.
+  - For PR reviews it's read from the base branch.
+  - The VS Code extension declares the sensitive settings as `restrictedConfigurations` for untrusted workspaces.
+- **Credentials never cross hosts.** GitHub tokens are host-scoped (`githubTokenFor`), and the LLM key only goes to `baseUrl`.
+- **File reads stay in the repo.** `readRepoFile` refuses paths that resolve outside the repo; untracked symlinks are skipped.
+- **Model output is sanitized** (`sanitizeText`) before it reaches a terminal, a report or GitHub.
 
 ## Testing against a real model
 

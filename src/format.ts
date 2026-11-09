@@ -1,3 +1,4 @@
+import { countLine } from './markdown';
 import { ReviewResult, Severity } from './types';
 
 const SGR: Record<string, string> = { reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m', red: '\x1b[31m', yellow: '\x1b[33m', blue: '\x1b[34m', gray: '\x1b[90m', magenta: '\x1b[35m', cyan: '\x1b[36m' };
@@ -26,11 +27,7 @@ export function renderTerminal(result: ReviewResult, opts: { color: boolean; tit
     out.push(c('gray', `Not reviewed: ${result.skippedFiles.map((s) => `${s.path} (${s.reason})`).join(', ')}`));
   }
   for (const e of result.errors) out.push(c('red', `Error: ${e}`));
-  const counts = (['critical', 'major', 'minor', 'nit'] as Severity[])
-    .map((s) => [s, result.findings.filter((f) => f.severity === s).length] as const)
-    .filter(([, n]) => n)
-    .map(([s, n]) => `${n} ${s}`)
-    .join(', ');
+  const counts = countLine(result.findings, ', ', '');
   out.push(
     c('gray', `${result.findings.length} finding(s)${counts ? ` (${counts})` : ''} · ${result.model} · ${(result.durationMs / 1000).toFixed(1)}s · ${result.reviewedFiles.length} file(s) in ${result.chunkCount} request(s)`),
   );

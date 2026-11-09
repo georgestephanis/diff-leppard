@@ -1,20 +1,12 @@
-import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { defaultSettings } from './config';
 import { makeExcluder } from './diff';
-import { getHeadSha, getLocalDiff, getRemotes, getRepoRoot, readRepoFile } from './git';
-import {
-  GitHubClient,
-  parsePrReference,
-  parseRemoteUrl,
-  postReview,
-  PullRequestInfo,
-  RepoRef,
-  ReviewEventSetting,
-  webHostFromApiUrl,
-} from './github';
-import { JsonMode, LlmClient, LlmConfig } from './llm';
+import { ghExec, githubRemotes } from './gh';
+import { getHeadSha, getLocalDiff, getRepoRoot, readRepoFile } from './git';
+import { GitHubClient, parsePrReference, postReview, PullRequestInfo, RepoRef, ReviewEventSetting, webHostFromApiUrl } from './github';
+import { healthCheck, JsonMode, LlmClient, LlmConfig } from './llm';
 import { loadPullRequest } from './pr';
 import { renderMarkdownReport, ReportMeta } from './report';
 import { CancelledError, runReview } from './review';
@@ -22,6 +14,8 @@ import { Logger, ReviewResult, Severity } from './types';
 
 const SECRET_KEY = 'diffLeppard.apiKey';
 const MAX_UNTRACKED_BYTES = 256 * 1024;
+/** Keep this many review reports in global storage. */
+const MAX_REPORTS = 20;
 
 interface Settings {
   llm: Omit<LlmConfig, 'apiKey'>;
@@ -40,40 +34,44 @@ interface Settings {
     postReview: 'ask' | 'always' | 'never';
     reviewEvent: ReviewEventSetting;
     suggestionBlocks: boolean;
+    attribution: boolean;
   };
 }
 
 function readSettings(): Settings {
   const c = vscode.workspace.getConfiguration('diffLeppard');
+  // Fallbacks come from the same defaults as the CLI (package.json declares them too, for the Settings UI).
+  const d = defaultSettings();
   return {
     llm: {
-      provider: c.get<'openai' | 'ollama'>('provider', 'openai'),
-      baseUrl: c.get<string>('baseUrl', 'http://localhost:8000/v1'),
-      model: c.get<string>('model', '').trim(),
-      temperature: c.get<number>('temperature', 0.1),
-      maxOutputTokens: c.get<number>('maxOutputTokens', 4096),
-      jsonMode: c.get<JsonMode>('jsonMode', 'json_object'),
-      stream: c.get<boolean>('stream', true),
-      timeoutMs: c.get<number>('requestTimeoutSeconds', 900) * 1000,
-      ollamaNumCtx: c.get<number>('ollamaNumCtx', 16384),
-      extraHeaders: c.get<Record<string, string>>('extraHeaders', {}),
-      extraBody: c.get<Record<string, unknown>>('extraBody', {}),
+      provider: c.get<'openai' | 'ollama'>('provider', d.provider),
+      baseUrl: c.get<string>('baseUrl', d.baseUrl),
+      model: c.get<string>('model', d.model).trim(),
+      temperature: c.get<number>('temperature', d.temperature),
+      maxOutputTokens: c.get<number>('maxOutputTokens', d.maxOutputTokens),
+      jsonMode: c.get<JsonMode>('jsonMode', d.jsonMode),
+      stream: c.get<boolean>('stream', d.stream),
+      timeoutMs: c.get<number>('requestTimeoutSeconds', d.requestTimeoutSeconds) * 1000,
+      ollamaNumCtx: c.get<number>('ollamaNumCtx', d.ollamaNumCtx),
+      extraHeaders: c.get<Record<string, string>>('extraHeaders', d.extraHeaders),
+      extraBody: c.get<Record<string, unknown>>('extraBody', d.extraBody),
     },
-    maxChunkChars: c.get<number>('maxChunkChars', 24000),
-    contextLines: c.get<number>('contextLines', 5),
-    includeUntracked: c.get<boolean>('includeUntracked', true),
-    minimumSeverity: c.get<Severity>('minimumSeverity', 'minor'),
-    excludeGlobs: c.get<string[]>('excludeGlobs', []),
-    extraInstructions: c.get<string>('extraInstructions', ''),
-    instructionsFile: c.get<string>('instructionsFile', '').trim(),
-    concurrency: c.get<number>('concurrency', 1),
+    maxChunkChars: c.get<number>('maxChunkChars', d.maxChunkChars),
+    contextLines: c.get<number>('contextLines', d.contextLines),
+    includeUntracked: c.get<boolean>('includeUntracked', d.includeUntracked),
+    minimumSeverity: c.get<Severity>('minimumSeverity', d.minimumSeverity),
+    excludeGlobs: c.get<string[]>('excludeGlobs', d.excludeGlobs),
+    extraInstructions: c.get<string>('extraInstructions', d.extraInstructions),
+    instructionsFile: c.get<string>('instructionsFile', d.instructionsFile).trim(),
+    concurrency: c.get<number>('concurrency', d.concurrency),
     showStatusBar: c.get<boolean>('showStatusBar', true),
     github: {
-      apiUrl: c.get<string>('github.apiUrl', 'https://api.github.com'),
+      apiUrl: c.get<string>('github.apiUrl', d.github.apiUrl),
       auth: c.get<'vscode' | 'gh-cli'>('github.auth', 'vscode'),
       postReview: c.get<'ask' | 'always' | 'never'>('github.postReview', 'ask'),
-      reviewEvent: c.get<ReviewEventSetting>('github.reviewEvent', 'COMMENT'),
-      suggestionBlocks: c.get<boolean>('github.suggestionBlocks', false),
+      reviewEvent: c.get<ReviewEventSetting>('github.reviewEvent', d.github.reviewEvent),
+      suggestionBlocks: c.get<boolean>('github.suggestionBlocks', d.github.suggestionBlocks),
+      attribution: c.get<boolean>('github.attribution', d.github.attribution),
     },
   };
 }
@@ -198,19 +196,9 @@ class Controller {
         if (cfg.model && models.length && !models.includes(cfg.model)) {
           vscode.window.showWarningMessage(`Model "${cfg.model}" is not in the server's model list: ${models.join(', ')}`);
         }
-        const client = new LlmClient({ ...cfg, model, maxOutputTokens: 64 }, this.logger);
-        const t0 = Date.now();
-        const res = await client.chat(
-          [
-            { role: 'system', content: 'You are a health check. Respond with JSON only.' },
-            { role: 'user', content: 'Respond with exactly {"ok": true}' },
-          ],
-          { signal: ac.signal, schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] } },
-        );
-        this.log.info(`Test reply from ${model} in ${Date.now() - t0}ms: ${res.content}`);
-        vscode.window.showInformationMessage(
-          `✓ ${model} replied in ${((Date.now() - t0) / 1000).toFixed(1)}s (${models.length} model(s) available).`,
-        );
+        const r = await healthCheck(new LlmClient({ ...cfg, model }, this.logger), ac.signal);
+        this.log.info(`Test reply from ${model} in ${r.ms}ms: ${r.content}`);
+        vscode.window.showInformationMessage(`✓ ${model} replied in ${(r.ms / 1000).toFixed(1)}s (${models.length} model(s) available).`);
       },
     );
   }
@@ -272,29 +260,13 @@ class Controller {
   private async githubToken(s: Settings): Promise<string> {
     const host = webHostFromApiUrl(s.github.apiUrl);
     if (s.github.auth === 'gh-cli') {
-      for (const bin of ['gh', '/opt/homebrew/bin/gh', '/usr/local/bin/gh']) {
-        const tok = await new Promise<string>((resolve) =>
-          execFile(bin, ['auth', 'token', '--hostname', host], (err, out) => resolve(err ? '' : out.trim())),
-        );
-        if (tok) return tok;
-      }
+      const tok = await ghExec(['auth', 'token', '--hostname', host]).catch(() => '');
+      if (tok) return tok;
       throw new Error(`Could not get a token from the GitHub CLI. Run "gh auth login --hostname ${host}".`);
     }
     const provider = host === 'github.com' ? 'github' : 'github-enterprise';
     const session = await vscode.authentication.getSession(provider, ['repo'], { createIfNone: true });
     return session.accessToken;
-  }
-
-  private async githubReposFor(root: string | undefined, host: string): Promise<{ remote: string; repo: RepoRef }[]> {
-    if (!root) return [];
-    const out: { remote: string; repo: RepoRef }[] = [];
-    for (const r of await getRemotes(root)) {
-      const repo = parseRemoteUrl(r.url, host);
-      if (repo && !out.some((o) => o.repo.owner === repo.owner && o.repo.repo === repo.repo)) out.push({ remote: r.name, repo });
-    }
-    // Prefer "upstream" (fork workflow: PRs live there), then "origin".
-    const rank = (n: string) => (n === 'upstream' ? 0 : n === 'origin' ? 1 : 2);
-    return out.sort((a, b) => rank(a.remote) - rank(b.remote));
   }
 
   private async choosePr(
@@ -436,7 +408,7 @@ class Controller {
     const s = readSettings();
     const host = webHostFromApiUrl(s.github.apiUrl);
     const root = await this.pickRepoRoot(false);
-    const repos = await this.githubReposFor(root, host);
+    const repos = await githubRemotes(root, host);
     const token = await this.githubToken(s);
     const gh = new GitHubClient(s.github.apiUrl, token, this.logger);
 
@@ -526,7 +498,7 @@ class Controller {
     const gh = new GitHubClient(last.pr.apiUrl, await this.githubToken(s), this.logger);
     const r = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: 'Posting review to GitHub…' },
-      () => postReview(gh, last.pr!.repo, last.pr!.info, last.result, { event, suggestionBlocks: s.github.suggestionBlocks }, this.logger),
+      () => postReview(gh, last.pr!.repo, last.pr!.info, last.result, { event, suggestionBlocks: s.github.suggestionBlocks, attribution: s.github.attribution }, this.logger),
     );
     for (const n of r.notes) this.log.warn(n);
     this.log.info(`Posted review: ${r.url}`);
@@ -549,6 +521,7 @@ class Controller {
     meta.reportDir = dir.fsPath;
     await vscode.workspace.fs.writeFile(reportUri, Buffer.from(renderMarkdownReport(result, meta), 'utf8'));
     this.last = { result, meta, reportUri, pr };
+    await this.pruneReports(dir);
     await vscode.commands.executeCommand('setContext', 'diffLeppard.hasReview', true);
     await vscode.commands.executeCommand('setContext', 'diffLeppard.hasPrReview', !!pr);
     await this.openReport();
@@ -556,6 +529,21 @@ class Controller {
       vscode.window
         .showWarningMessage(`${result.errors.length} part(s) of the diff failed to review.`, 'Show Log')
         .then((c) => c && this.log.show());
+    }
+  }
+
+  /** Keep only the newest MAX_REPORTS reports (names start with an ISO timestamp, so they sort by age). */
+  private async pruneReports(dir: vscode.Uri): Promise<void> {
+    try {
+      const names = (await vscode.workspace.fs.readDirectory(dir))
+        .filter(([n, t]) => t === vscode.FileType.File && n.endsWith('.md'))
+        .map(([n]) => n)
+        .sort();
+      for (const n of names.slice(0, Math.max(0, names.length - MAX_REPORTS))) {
+        await vscode.workspace.fs.delete(vscode.Uri.joinPath(dir, n));
+      }
+    } catch (e) {
+      this.log.debug(`Could not prune old reports: ${(e as Error).message}`);
     }
   }
 

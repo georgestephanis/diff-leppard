@@ -60,7 +60,13 @@ export interface LocalDiff {
 
 export async function getLocalDiff(root: string, opts: LocalDiffOptions): Promise<LocalDiff> {
   const base = (await getHeadSha(root)) ?? EMPTY_TREE;
-  const common = ['diff', '--no-color', '--no-ext-diff', '--find-renames', `-U${opts.contextLines}`];
+  // Pin the output format regardless of the user's git config (diff.noprefix, diff.mnemonicPrefix, diff.relative, …).
+  const common = [
+    '-c', 'diff.noprefix=false',
+    '-c', 'diff.mnemonicPrefix=false',
+    'diff', '--no-color', '--no-ext-diff', '--no-relative', '--src-prefix=a/', '--dst-prefix=b/',
+    '--find-renames', `-U${opts.contextLines}`,
+  ];
   const args = opts.stagedOnly ? [...common, '--cached', base] : [...common, base];
   const files = parseUnifiedDiff(await git(root, args));
   const skipped: { path: string; reason: string }[] = [];
@@ -74,7 +80,12 @@ export async function getLocalDiff(root: string, opts: LocalDiffOptions): Promis
       }
       const abs = path.join(root, rel);
       try {
-        const st = await fs.stat(abs);
+        // lstat: never follow an untracked symlink out of the repo (git itself only shows the link text).
+        const st = await fs.lstat(abs);
+        if (st.isSymbolicLink()) {
+          skipped.push({ path: rel, reason: 'symlink' });
+          continue;
+        }
         if (!st.isFile()) continue;
         if (st.size > opts.maxUntrackedBytes) {
           skipped.push({ path: rel, reason: `untracked file larger than ${Math.round(opts.maxUntrackedBytes / 1024)} KB` });
@@ -94,9 +105,16 @@ export async function getLocalDiff(root: string, opts: LocalDiffOptions): Promis
   return { files, skipped };
 }
 
+/**
+ * Read a repo-relative file (e.g. review guidelines), truncated to maxChars. Refuses paths that resolve
+ * outside the repo, including through symlinks, so config can't pull e.g. ~/.aws/credentials into a prompt.
+ */
 export async function readRepoFile(root: string, rel: string, maxChars = 8000): Promise<string | undefined> {
   try {
-    const text = await fs.readFile(path.join(root, rel), 'utf8');
+    const realRoot = await fs.realpath(root);
+    const real = await fs.realpath(path.resolve(root, rel));
+    if (real !== realRoot && !real.startsWith(realRoot + path.sep)) return undefined;
+    const text = await fs.readFile(real, 'utf8');
     return text.length > maxChars ? text.slice(0, maxChars) + '\n…[truncated]' : text;
   } catch {
     return undefined;

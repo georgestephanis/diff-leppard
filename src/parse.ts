@@ -29,17 +29,32 @@ export interface ParsedOutput {
   partial: boolean;
 }
 
+/**
+ * Remove reasoning that some models emit before their answer: leading <think>…</think> blocks, or
+ * everything up to a dangling </think> (some servers drop the opening tag). Only text before the first
+ * `{` / `[` is touched, so think tags quoted inside the JSON answer (e.g. reviewing code that handles
+ * them) survive.
+ */
 export function stripThinking(text: string): string {
-  // Remove complete <think>…</think> blocks, and a dangling closing tag (some servers drop the opener).
-  let t = text.replace(/<(think|thinking|reasoning)>[\s\S]*?<\/\1>/gi, '');
+  let t = text.trimStart();
+  for (;;) {
+    const m = /^<(think|thinking|reasoning)>[\s\S]*?<\/\1>\s*/i.exec(t);
+    if (!m) break;
+    t = t.slice(m[0].length);
+  }
+  const jsonStart = t.search(/[{[]/);
   const close = /<\/(think|thinking|reasoning)>/i.exec(t);
-  if (close) t = t.slice(close.index + close[0].length);
+  if (close && (jsonStart < 0 || close.index < jsonStart)) t = t.slice(close.index + close[0].length);
   return t.trim();
 }
 
-function stripFences(text: string): string {
-  const m = /```(?:json|JSON)?\s*\n([\s\S]*?)\n?```/.exec(text);
-  return m ? m[1] : text;
+/** Contents of every fenced code block, in order. */
+function fencedBlocks(text: string): string[] {
+  const out: string[] = [];
+  const re = /^```[\w-]*[ \t]*\n([\s\S]*?)\n```[ \t]*$/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) out.push(m[1]);
+  return out;
 }
 
 function tryParse(s: string): unknown {
@@ -98,14 +113,10 @@ function fromObject(obj: unknown): ParsedOutput | undefined {
   return undefined;
 }
 
-export function parseModelOutput(raw: string): ParsedOutput {
-  const text = stripFences(stripThinking(raw)).trim();
-  if (!text) return { findings: [], ok: false, partial: false };
-
+function parseCandidate(text: string): ParsedOutput | undefined {
   const direct = fromObject(tryParse(text));
   if (direct) return direct;
-
-  // Find the outermost JSON object somewhere in the text.
+  // The outermost JSON object somewhere in the text.
   const first = text.indexOf('{');
   const last = text.lastIndexOf('}');
   if (first >= 0 && last > first) {
@@ -117,6 +128,18 @@ export function parseModelOutput(raw: string): ParsedOutput {
   if (arrFirst >= 0 && arrLast > arrFirst && (first < 0 || arrFirst < first)) {
     const arr = fromObject(tryParse(text.slice(arrFirst, arrLast + 1)));
     if (arr) return arr;
+  }
+  return undefined;
+}
+
+export function parseModelOutput(raw: string): ParsedOutput {
+  const text = stripThinking(raw);
+  if (!text) return { findings: [], ok: false, partial: false };
+
+  // Fenced blocks first (the usual "```json" wrapper), then the whole reply.
+  for (const candidate of [...fencedBlocks(text), text]) {
+    const parsed = parseCandidate(candidate.trim());
+    if (parsed) return parsed;
   }
 
   // Salvage: output was probably truncated. Take the summary if present and every complete finding object.

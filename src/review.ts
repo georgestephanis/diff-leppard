@@ -1,5 +1,6 @@
 import { addedLines, Chunk, chunkDiff, commentableLines } from './diff';
 import { LlmClient, LlmError } from './llm';
+import { sanitizeText } from './markdown';
 import { parseModelOutput, RawFinding } from './parse';
 import { buildReviewMessages, buildSynthesisMessages, PromptContext, REVIEW_JSON_SCHEMA } from './prompt';
 import { FileDiff, Finding, Logger, ReviewResult, Severity, SEVERITIES, severityRank } from './types';
@@ -80,7 +81,7 @@ export async function runReview(files: FileDiff[], opts: ReviewOptions): Promise
       const r = await reviewChunk(chunks[i], i, chunks.length, opts, (chars) =>
         opts.onProgress?.(`${label}: receiving… (${chars} chars, ${done}/${chunks.length} parts done)`),
       );
-      summaries[i] = r.summary;
+      summaries[i] = r.summary === undefined ? undefined : sanitizeText(r.summary);
       findings[i] = r.findings;
     } catch (e) {
       if (opts.signal?.aborted) throw new CancelledError();
@@ -123,7 +124,7 @@ export async function runReview(files: FileDiff[], opts: ReviewOptions): Promise
         ),
         { signal: opts.signal, schema: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] } },
       );
-      result.summary = parseModelOutput(r.content).summary?.trim() || partSummaries.join(' ');
+      result.summary = sanitizeText(parseModelOutput(r.content).summary ?? '').trim() || partSummaries.join(' ');
     } catch (e) {
       if (opts.signal?.aborted) throw new CancelledError();
       opts.log.warn(`Summary synthesis failed: ${(e as Error).message}`);
@@ -173,7 +174,7 @@ async function reviewChunk(
 // ---------------------------------------------------------------------------
 
 function str(v: unknown): string {
-  if (typeof v === 'string') return v.trim();
+  if (typeof v === 'string') return sanitizeText(v).trim();
   if (typeof v === 'number') return String(v);
   return '';
 }
@@ -240,17 +241,23 @@ function matchFile(name: string, files: FileDiff[]): FileDiff | undefined {
 const SNAP_DISTANCE = 3;
 
 /** Map a model-provided line range onto lines that are actually in the diff. */
+const lineMapCache = new WeakMap<FileDiff, { commentable: Map<number, number>; added: Set<number> }>();
+function lineMaps(file: FileDiff) {
+  let m = lineMapCache.get(file);
+  if (!m) lineMapCache.set(file, (m = { commentable: commentableLines(file), added: addedLines(file) }));
+  return m;
+}
+
 export function mapLines(
   file: FileDiff,
   line: number | undefined,
   endLine: number | undefined,
 ): { line?: number; endLine?: number; inline: boolean; adjusted: boolean } {
   if (line === undefined || line < 1) return { inline: false, adjusted: false };
-  const commentable = commentableLines(file);
+  const { commentable, added } = lineMaps(file);
   let l = line;
   let adjusted = false;
   if (!commentable.has(l)) {
-    const added = addedLines(file);
     let best: number | undefined;
     for (let d = 1; d <= SNAP_DISTANCE && best === undefined; d++) {
       const cands = [l - d, l + d].filter((x) => commentable.has(x));
@@ -270,6 +277,9 @@ export function mapLines(
       }
     }
   }
+  // A multi-line range we couldn't keep means the location (and any replacement code) is approximate:
+  // flag it so the comment is never rendered as a one-click suggestion over the wrong lines.
+  if (endLine !== undefined && endLine > line && e === undefined) adjusted = true;
   return { line: l, endLine: e, inline: true, adjusted };
 }
 
@@ -284,7 +294,7 @@ export function normalizeFindings(raw: RawFinding[], files: FileDiff[]): Finding
     const name = cleanPath(str(r.file) || str(r.path));
     const file = matchFile(name, files);
     const severity = normalizeSeverity(r.severity);
-    let suggestion = typeof r.suggestion === 'string' ? r.suggestion : undefined;
+    let suggestion = typeof r.suggestion === 'string' ? sanitizeText(r.suggestion) : undefined;
     if (suggestion) {
       const fence = /^```[\w-]*\n([\s\S]*?)\n?```\s*$/.exec(suggestion.trim());
       if (fence) suggestion = fence[1];
@@ -326,7 +336,8 @@ function dedupe(findings: Finding[]): Finding[] {
 
 async function pool(n: number, concurrency: number, fn: (i: number) => Promise<void>): Promise<void> {
   let next = 0;
-  const runners = Array.from({ length: Math.min(n, concurrency) }, async () => {
+  const width = Number.isFinite(concurrency) && concurrency >= 1 ? Math.min(n, Math.floor(concurrency)) : 1;
+  const runners = Array.from({ length: width }, async () => {
     while (next < n) {
       const i = next++;
       await fn(i);

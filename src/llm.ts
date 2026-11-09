@@ -29,6 +29,8 @@ export interface ChatOptions {
   schema?: object;
   /** Called as output arrives with the number of characters received so far. */
   onProgress?: (chars: number) => void;
+  /** Override maxOutputTokens for this request. */
+  maxTokens?: number;
 }
 
 export interface ChatResult {
@@ -46,6 +48,9 @@ export class LlmError extends Error {
     super(message);
   }
 }
+
+/** Error text that means "this server doesn't support the structured-output parameters we sent". */
+const STRUCTURED_OUTPUT_ERROR = /response_format|json_schema|json_object|guided[_ ]|grammar|structured output|\bformat\b.*(not supported|unsupported|invalid)/i;
 
 export class LlmClient {
   /** Set when the server rejected structured output once; we stop asking for it. */
@@ -79,7 +84,7 @@ export class LlmClient {
     try {
       res = await fetch(url, { ...init, headers: this.headers(), signal: AbortSignal.any(signals) });
     } catch (e) {
-      throw this.wrapNetworkError(e, url, signal);
+      throw this.wrapNetworkError(e, url, signal, timeoutMs);
     }
     if (!res.ok) {
       const body = await res.text().catch(() => '');
@@ -95,11 +100,11 @@ export class LlmClient {
     return res;
   }
 
-  private wrapNetworkError(e: unknown, url: string, signal?: AbortSignal): Error {
+  private wrapNetworkError(e: unknown, url: string, signal: AbortSignal | undefined, timeoutMs: number): Error {
     const err = e as Error & { cause?: { code?: string; message?: string } };
     if (signal?.aborted) return new LlmError('Cancelled');
     if (err.name === 'TimeoutError' || err.name === 'AbortError') {
-      return new LlmError(`Request to ${url} timed out after ${Math.round(this.cfg.timeoutMs / 1000)}s`);
+      return new LlmError(`Request to ${url} timed out after ${Math.round(timeoutMs / 1000)}s`);
     }
     const cause = err.cause?.code ?? err.cause?.message ?? err.message;
     return new LlmError(`Could not reach ${url} (${cause}). Is the server running and is diffLeppard.baseUrl correct?`);
@@ -124,8 +129,8 @@ export class LlmClient {
       if (
         e instanceof LlmError &&
         mode !== 'none' &&
-        (e.status === 400 || e.status === 422 || e.status === 500) &&
-        /response_format|json|schema|guided|grammar|format/i.test(e.body ?? e.message)
+        (e.status === 400 || e.status === 422) &&
+        STRUCTURED_OUTPUT_ERROR.test(e.body ?? e.message)
       ) {
         this.log.warn(`Server rejected structured output (${mode}); retrying without it. ${e.message}`);
         this.jsonModeOverride = 'none';
@@ -144,7 +149,7 @@ export class LlmClient {
       model: this.cfg.model,
       messages,
       temperature: this.cfg.temperature,
-      max_tokens: this.cfg.maxOutputTokens,
+      max_tokens: opts.maxTokens ?? this.cfg.maxOutputTokens,
       stream: this.cfg.stream,
       ...(this.cfg.extraBody ?? {}),
     };
@@ -203,7 +208,7 @@ export class LlmClient {
       options: {
         temperature: this.cfg.temperature,
         num_ctx: this.cfg.ollamaNumCtx,
-        num_predict: this.cfg.maxOutputTokens,
+        num_predict: opts.maxTokens ?? this.cfg.maxOutputTokens,
         ...extraOptions,
       },
     };
@@ -261,28 +266,48 @@ async function readLines(res: Response, onLine: (line: string) => void): Promise
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
-  for (;;) {
-    let chunk: ReadableStreamReadResult<Uint8Array>;
-    try {
-      chunk = await reader.read();
-    } catch (e) {
-      const name = (e as Error).name;
-      if (name === 'TimeoutError') throw new LlmError('Model request timed out while streaming (raise diffLeppard.requestTimeoutSeconds)');
-      if (name === 'AbortError') throw new LlmError('Cancelled');
-      throw new LlmError(`Stream from model server failed: ${(e as Error).message}`);
+  let finished = false;
+  try {
+    for (;;) {
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch (e) {
+        const name = (e as Error).name;
+        if (name === 'TimeoutError') throw new LlmError('Model request timed out while streaming (raise requestTimeoutSeconds)');
+        if (name === 'AbortError') throw new LlmError('Cancelled');
+        throw new LlmError(`Stream from model server failed: ${(e as Error).message}`);
+      }
+      const { done, value } = chunk;
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).replace(/\r$/, '');
+        buf = buf.slice(nl + 1);
+        onLine(line);
+      }
     }
-    const { done, value } = chunk;
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let nl: number;
-    while ((nl = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, nl).replace(/\r$/, '');
-      buf = buf.slice(nl + 1);
-      onLine(line);
-    }
+    buf += decoder.decode();
+    if (buf.trim()) onLine(buf.replace(/\r$/, ''));
+    finished = true;
+  } finally {
+    // On an error event (or any throw) release the connection instead of leaving it open until the timeout.
+    if (!finished) await reader.cancel().catch(() => undefined);
   }
-  buf += decoder.decode();
-  if (buf.trim()) onLine(buf.replace(/\r$/, ''));
+}
+
+/** A tiny request to check the server answers chat completions. Shared by the extension and the CLI. */
+export async function healthCheck(client: LlmClient, signal?: AbortSignal): Promise<{ content: string; ms: number }> {
+  const t0 = Date.now();
+  const r = await client.chat(
+    [
+      { role: 'system', content: 'You are a health check. Respond with JSON only.' },
+      { role: 'user', content: 'Respond with exactly {"ok": true}' },
+    ],
+    { signal, maxTokens: 256, schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] } },
+  );
+  return { content: r.content, ms: Date.now() - t0 };
 }
 
 function extractErrorMessage(body: string): string {
