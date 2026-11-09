@@ -147,7 +147,7 @@ diff-leppard local                    # uncommitted changes in the current repo
 diff-leppard local --staged --fail-on major   # pre-commit / CI style: exit 1 on major+ findings
 diff-leppard local --base main        # everything on this branch since it left main (committed + uncommitted)
 diff-leppard local --range v1.0.0..HEAD   # exactly these commits (a...b = since their merge-base)
-diff-leppard pr 123 -f json           # machine-readable output (also: -f markdown, -o report.md)
+diff-leppard pr 123 -f json           # machine-readable output (also -f markdown, sarif, rdjson; -o report.md)
 ```
 
 Settings are read in this order, each overriding the one before:
@@ -220,7 +220,7 @@ jobs:
           # extra-body: '{"chat_template_kwargs": {"enable_thinking": false}}'
 ```
 
-The example workflow reviews PRs when they're opened or marked ready. Maintainers can also request a review by commenting **`/review`** on a PR, or run it by hand from the Actions tab. The review is posted by `github-actions[bot]`. It also appears in the job summary and as annotations. The `findings`, `blocking` and `report` outputs let later steps act on the result.
+The example workflow reviews PRs when they're opened or marked ready. Maintainers can also request a review by commenting **`/review`** on a PR, or run it by hand from the Actions tab. The review is posted by `github-actions[bot]`. It also appears in the job summary and as annotations. The `findings`, `blocking`, `report` and `sarif` outputs let later steps act on the result, for example by uploading the SARIF to code scanning (see below).
 
 Things to know:
 
@@ -291,6 +291,43 @@ The plugin adds a skill that teaches Claude Code to install, configure and troub
 ```
 
 On older Claude Code versions, run `/plugin marketplace add georgestephanis/diff-leppard`, then `/plugin install diff-leppard@diff-leppard`. The skill is in [`skills/diff-leppard/SKILL.md`](skills/diff-leppard/SKILL.md).
+
+## SARIF, reviewdog and other code hosts
+
+`-f sarif` and `-f rdjson` (or `-o report.sarif` / `-o report.rdjson`) produce standard formats for other tools:
+
+- **SARIF 2.1.0**, for GitHub code scanning, many IDEs and security dashboards. Security findings carry a `security-severity` score, and exact suggestions are included as fixes.
+- **rdjson**, [reviewdog](https://github.com/reviewdog/reviewdog)'s format. reviewdog can post findings to **GitLab, Bitbucket, Gitea and Gerrit**, as well as GitHub.
+
+**GitHub code scanning from the Action.** The action always writes a SARIF file and exposes it as the `sarif` output:
+
+```yaml
+    permissions: { contents: read, pull-requests: write, security-events: write }
+    steps:
+      - id: review
+        uses: georgestephanis/diff-leppard@v1
+        with: { base-url: "${{ secrets.LLM_BASE_URL }}", api-key: "${{ secrets.LLM_API_KEY }}" }
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always() && steps.review.outputs.sarif != ''
+        with: { sarif_file: "${{ steps.review.outputs.sarif }}", category: diff-leppard }
+```
+
+**GitLab merge requests via reviewdog** (`.gitlab-ci.yml`):
+
+```yaml
+diff-leppard:
+  rules: [{ if: $CI_PIPELINE_SOURCE == "merge_request_event" }]
+  image: node:22
+  variables: { DIFF_LEPPARD_BASE_URL: "https://llm.example.com/v1", GIT_DEPTH: 0 }  # DIFF_LEPPARD_API_KEY and REVIEWDOG_GITLAB_API_TOKEN as masked CI variables
+  script:
+    - npm install -g https://github.com/georgestephanis/diff-leppard/releases/latest/download/diff-leppard.tgz
+    - curl -sfL https://raw.githubusercontent.com/reviewdog/reviewdog/master/install.sh | sh -s -- -b /usr/local/bin
+    - git fetch origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+    - diff-leppard local --range "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME...HEAD" -q -f rdjson
+        | reviewdog -f=rdjson -name=diff-leppard -reporter=gitlab-mr-discussion -filter-mode=nofilter
+```
+
+The same pattern works with reviewdog's `bitbucket-code-report`, `gitea-pr-review` and `gerrit-change-review` reporters.
 
 ## How posted reviews work
 
