@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Release automation:** pushing a `vX.Y.Z` tag tests the code, builds the `.vsix` and CLI tarball, and opens a draft release with notes from this changelog. Publishing the draft publishes to npm, Open VSX and the VS Code Marketplace, syncs the `gh-diff-leppard` repo and moves the `vX` tag. Each of those runs only if its secret is set, and publishing as a pre-release keeps the release quiet. See `docs/RELEASING.md`.
+
 ## 1.1.0 (2026-11-09)
 
 - **pre-commit hooks:** `diff-leppard` (installs itself) and `diff-leppard-system` (uses the CLI on PATH). They review staged changes at pre-commit and the pushed commits at pre-push.

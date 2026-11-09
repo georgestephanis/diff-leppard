@@ -1,0 +1,162 @@
+# Release pipeline. See docs/RELEASING.md.
+#
+# 1. Push a version tag (vX.Y.Z, matching package.json). This workflow tests, builds the .vsix and the CLI
+#    tarball, and creates a DRAFT GitHub release with notes from CHANGELOG.md.
+# 2. Review the draft and publish it on GitHub. Tick "Publish to the GitHub Marketplace" if you want the
+#    listing updated.
+#    - Published as a normal release: this workflow publishes to npm, Open VSX and the VS Code Marketplace,
+#      syncs the gh-diff-leppard repo and moves the vX major tag. Each step needs its secret; steps whose
+#      secret isn't set are skipped and noted in the run summary.
+#    - Published as a pre-release: nothing is published to registries (a quiet release).
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Tag matches package.json
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$version" != "$pkg" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match package.json version $pkg"
+            exit 1
+          fi
+      - run: npm ci --no-audit --no-fund
+      - name: dist/ is up to date
+        run: |
+          npm run build
+          if [ -n "$(git status --porcelain -- dist)" ]; then
+            echo "::error::dist/ is out of date at $GITHUB_REF_NAME. Run 'npm run build', commit, and re-tag."
+            exit 1
+          fi
+      - run: npm test
+      - name: Build release assets
+        run: |
+          npm run package
+          npm pack --silent
+          mv "diff-leppard-${GITHUB_REF_NAME#v}.tgz" diff-leppard.tgz
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > notes.md
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; updating its assets."
+            gh release upload "$GITHUB_REF_NAME" diff-leppard.vsix diff-leppard.tgz --clobber
+          else
+            prerelease=""
+            case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+            gh release create "$GITHUB_REF_NAME" --draft $prerelease \
+              --title "Diff Leppard ${GITHUB_REF_NAME#v}" --notes-file notes.md \
+              diff-leppard.vsix diff-leppard.tgz
+          fi
+          echo "Draft release ready: review and publish it at $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases" >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    if: github.event_name == 'release' && !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # move the vX major tag
+      id-token: write # npm provenance
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      GH_TOKEN: ${{ github.token }}
+      # Secrets can't be tested in `if:` directly, so expose whether each one is set.
+      HAS_NPM: ${{ secrets.NPM_TOKEN != '' }}
+      HAS_OVSX: ${{ secrets.OVSX_PAT != '' }}
+      HAS_VSCE: ${{ secrets.VSCE_PAT != '' }}
+      HAS_GHX: ${{ secrets.GH_EXTENSION_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      - name: Download release assets
+        run: gh release download "$TAG" --pattern diff-leppard.vsix --pattern diff-leppard.tgz
+
+      - name: Publish to npm
+        if: env.HAS_NPM == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm publish diff-leppard.tgz --provenance --access public
+          echo "- ✅ npm: https://www.npmjs.com/package/diff-leppard" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish to Open VSX
+        if: env.HAS_OVSX == 'true'
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          npx --yes ovsx@0.10 publish diff-leppard.vsix --pat "$OVSX_PAT"
+          echo "- ✅ Open VSX: https://open-vsx.org/extension/georgestephanis/diff-leppard" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish to the VS Code Marketplace
+        if: env.HAS_VSCE == 'true'
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          npx --yes @vscode/vsce@3 publish --packagePath diff-leppard.vsix --pat "$VSCE_PAT"
+          echo "- ✅ VS Code Marketplace: https://marketplace.visualstudio.com/items?itemName=georgestephanis.diff-leppard" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Sync the gh-diff-leppard extension repo
+        if: env.HAS_GHX == 'true'
+        env:
+          GH_EXTENSION_TOKEN: ${{ secrets.GH_EXTENSION_TOKEN }}
+        run: |
+          version="${TAG#v}"
+          git clone --quiet "https://x-access-token:${GH_EXTENSION_TOKEN}@github.com/georgestephanis/gh-diff-leppard.git" ghx
+          sed "s/__VERSION__/${version}/g" gh-diff-leppard/standalone/gh-diff-leppard > ghx/gh-diff-leppard
+          sed "s/__VERSION__/${version}/g" gh-diff-leppard/standalone/README.md > ghx/README.md
+          cp LICENSE ghx/LICENSE
+          chmod +x ghx/gh-diff-leppard
+          cd ghx
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "gh-diff-leppard already up to date"
+          else
+            git commit --quiet -m "Release ${TAG} (generated from georgestephanis/diff-leppard)"
+            git push --quiet origin HEAD
+          fi
+          git tag -f "$TAG" && git push --quiet -f origin "$TAG"
+          echo "- ✅ gh extension: https://github.com/georgestephanis/gh-diff-leppard" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Move the major-version tag
+        run: |
+          major="${TAG%%.*}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa "$major" -m "Diff Leppard ${major} (floating major tag → ${TAG})" "${TAG}^{commit}"
+          git push --quiet -f origin "$major"
+          echo "- ✅ \`${major}\` now points at ${TAG}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Note skipped steps
+        if: always()
+        run: |
+          [ "$HAS_NPM" = true ] || echo "- ⏭️ npm skipped (no NPM_TOKEN secret)" >> "$GITHUB_STEP_SUMMARY"
+          [ "$HAS_OVSX" = true ] || echo "- ⏭️ Open VSX skipped (no OVSX_PAT secret)" >> "$GITHUB_STEP_SUMMARY"
+          [ "$HAS_VSCE" = true ] || echo "- ⏭️ VS Code Marketplace skipped (no VSCE_PAT secret)" >> "$GITHUB_STEP_SUMMARY"
+          [ "$HAS_GHX" = true ] || echo "- ⏭️ gh extension repo skipped (no GH_EXTENSION_TOKEN secret)" >> "$GITHUB_STEP_SUMMARY"
