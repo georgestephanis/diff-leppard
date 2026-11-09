@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1 (2026-11-09)
+
+- **GitHub Action:** shortened the `action.yml` description to fit the GitHub Marketplace's 125-character limit.
+- **Docs:** install the CLI from the prebuilt `diff-leppard.tgz` release asset, because npm 11 can't build it from a git URL.
+
 ## 1.0.0 (2026-11-09)
 
 The first release of Diff Leppard 🐆: AI code review on your own model server.

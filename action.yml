@@ -1,5 +1,5 @@
 name: Diff Leppard Code Review
-description: AI code review of a pull request using your own OpenAI-compatible LLM server (vLLM, Ollama, LM Studio, llama.cpp, …), posted as a PR review.
+description: "AI code review for pull requests on your own LLM server: vLLM, Ollama, LM Studio, or any OpenAI-compatible API."
 author: George Stephanis
 branding:
   icon: check-square
