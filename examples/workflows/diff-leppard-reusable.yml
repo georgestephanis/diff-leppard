@@ -60,7 +60,11 @@ jobs:
     runs-on: ubuntu-latest   # or a self-hosted runner group that can reach your model server
     timeout-minutes: 30
     concurrency:
-      group: diff-leppard-${{ github.repository }}-${{ inputs.pr || github.event.pull_request.number || github.event.issue.number }}
+      # One review at a time per PR. Comments that aren't "/review" get their own group, so a stray comment
+      # can't cancel a review in progress, even if this job is reached for one.
+      group: >-
+        diff-leppard-${{ github.repository }}-${{ inputs.pr || github.event.pull_request.number || github.event.issue.number }}-${{
+        (github.event_name == 'issue_comment' && !startsWith(github.event.comment.body, '/review')) && github.event.comment.id || 'review' }}
       cancel-in-progress: true
     steps:
       - name: Acknowledge /review
