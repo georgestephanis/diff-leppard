@@ -248,10 +248,10 @@
         "properties": {
           "diffLeppard.maxChunkChars": {
             "type": "integer",
-            "default": 24000,
-            "minimum": 2000,
+            "default": 0,
+            "minimum": 0,
             "order": 20,
-            "markdownDescription": "Diffs are split into chunks of at most this many characters per request (roughly 3.5 chars per token). Size it to your model's context window minus `maxOutputTokens` and ~1k tokens of prompt: e.g. 24000 for a 16k-context model, 90000 for 32k."
+            "markdownDescription": "Maximum diff characters per model request. `0` (default) = **auto**: sized to the model's context window as reported by the server (vLLM, apfel, \u2026; for the `ollama` provider, `ollamaNumCtx`), minus `maxOutputTokens` and prompt overhead, capped at 100,000. Falls back to 24,000 if the server doesn't report one. Set a number to override."
           },
           "diffLeppard.contextLines": {
             "type": "integer",

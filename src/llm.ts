@@ -110,6 +110,23 @@ export class LlmClient {
     return new LlmError(`Could not reach ${url} (${cause}). Is the server running and is diffLeppard.baseUrl correct?`);
   }
 
+  /**
+   * The context window (in tokens) the server reports for the configured model, if it reports one.
+   * vLLM: max_model_len; apfel and others: context_window / context_length / max_context_length.
+   * For the native Ollama provider it's the num_ctx we send.
+   */
+  async contextWindow(signal?: AbortSignal): Promise<number | undefined> {
+    if (this.cfg.provider === 'ollama') return this.cfg.ollamaNumCtx;
+    const res = await this.request(`${this.base()}/models`, { method: 'GET' }, signal, 15000);
+    const json = (await res.json()) as { data?: Record<string, unknown>[] };
+    const entry = (json.data ?? []).find((m) => m.id === this.cfg.model) ?? (json.data?.length === 1 ? json.data[0] : undefined);
+    for (const k of ['max_model_len', 'context_window', 'context_length', 'max_context_length']) {
+      const v = entry?.[k];
+      if (typeof v === 'number' && v > 0) return v;
+    }
+    return undefined;
+  }
+
   async listModels(signal?: AbortSignal): Promise<string[]> {
     if (this.cfg.provider === 'ollama') {
       const res = await this.request(`${this.base()}/api/tags`, { method: 'GET' }, signal, 15000);
@@ -321,4 +338,44 @@ function extractErrorMessage(body: string): string {
     /* not JSON */
   }
   return body.slice(0, 500);
+}
+
+/** Chunk size used when maxChunkChars is "auto" (0) and the server doesn't report a context window. */
+export const FALLBACK_CHUNK_CHARS = 24000;
+/** Upper bound for auto-sized chunks: review quality drops on huge prompts even when they fit. */
+export const MAX_AUTO_CHUNK_CHARS = 100000;
+const PROMPT_OVERHEAD_TOKENS = 1500;
+/** Conservative: code is often denser than the usual ~3.5–4 chars/token. */
+const CHARS_PER_TOKEN = 3;
+
+/**
+ * Resolve maxChunkChars. A positive value is used as-is; 0 means "auto": size requests to the model's
+ * context window (minus the output budget and prompt overhead), falling back to FALLBACK_CHUNK_CHARS.
+ */
+export async function resolveChunkChars(
+  client: LlmClient,
+  configured: number,
+  maxOutputTokens: number,
+  log: Logger,
+  signal?: AbortSignal,
+): Promise<number> {
+  if (configured > 0) return configured;
+  let ctx: number | undefined;
+  try {
+    ctx = await client.contextWindow(signal);
+  } catch (e) {
+    log.debug(`Could not read the model's context window: ${(e as Error).message}`);
+  }
+  if (!ctx) {
+    log.info(`Server doesn't report a context window; using ${FALLBACK_CHUNK_CHARS} diff characters per request (set maxChunkChars to override).`);
+    return FALLBACK_CHUNK_CHARS;
+  }
+  const available = ctx - maxOutputTokens - PROMPT_OVERHEAD_TOKENS;
+  if (available < 1000) {
+    log.warn(`maxOutputTokens (${maxOutputTokens}) leaves almost no room in the model's ${ctx}-token context; lower it or set maxChunkChars.`);
+    return 2000;
+  }
+  const chars = Math.min(MAX_AUTO_CHUNK_CHARS, Math.max(2000, available * CHARS_PER_TOKEN));
+  log.info(`Model context is ${ctx} tokens → up to ${chars} diff characters per request.`);
+  return chars;
 }

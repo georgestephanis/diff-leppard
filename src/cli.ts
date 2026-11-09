@@ -15,7 +15,7 @@ import { renderTerminal } from './format';
 import { ghExec, githubRemotes, githubTokenFor } from './gh';
 import { getLocalDiff, getRepoRoot, readRepoFile } from './git';
 import { GitHubClient, parsePrReference, postReview, RepoRef, ReviewEventSetting, webHostFromApiUrl } from './github';
-import { healthCheck, LlmClient, LlmConfig, LlmError } from './llm';
+import { healthCheck, LlmClient, LlmConfig, LlmError, resolveChunkChars } from './llm';
 import { loadPullRequest } from './pr';
 import { renderMarkdownReport } from './report';
 import { CancelledError, runReview } from './review';
@@ -363,6 +363,7 @@ export async function main(argv: string[]): Promise<number> {
       const llm = await makeLlm(s, log);
       result = await runReview(diff.files, {
         ...reviewOpts,
+        maxChunkChars: await resolveChunkChars(llm, reviewOpts.maxChunkChars, s.maxOutputTokens, log, ac.signal),
         llm,
         context: { extraInstructions: s.extraInstructions, repoInstructions },
         preSkipped: diff.skipped,
@@ -412,6 +413,7 @@ export async function main(argv: string[]): Promise<number> {
       const llm = await makeLlm(s, log);
       result = await runReview(loaded.files, {
         ...reviewOpts,
+        maxChunkChars: await resolveChunkChars(llm, reviewOpts.maxChunkChars, s.maxOutputTokens, log, ac.signal),
         llm,
         context: { title: loaded.pr.title, description: loaded.pr.body, extraInstructions: s.extraInstructions, repoInstructions: loaded.repoInstructions },
         preSkipped: loaded.skipped,

@@ -40,7 +40,7 @@ inputs:
     description: Fail the job if any finding is at or above this severity. Empty = never fail on findings.
     default: ""
   max-chunk-chars:
-    description: Max diff characters per model request (size to the model's context window)
+    description: Max diff characters per model request. Empty or 0 = auto (sized to the context window the server reports, e.g. vLLM's max_model_len)
     default: ""
   max-output-tokens:
     description: Max tokens the model may generate per request

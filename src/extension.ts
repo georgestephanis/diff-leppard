@@ -6,7 +6,7 @@ import { makeExcluder } from './diff';
 import { ghExec, githubRemotes } from './gh';
 import { getHeadSha, getLocalDiff, getRepoRoot, readRepoFile } from './git';
 import { GitHubClient, parsePrReference, postReview, PullRequestInfo, RepoRef, ReviewEventSetting, webHostFromApiUrl } from './github';
-import { healthCheck, JsonMode, LlmClient, LlmConfig } from './llm';
+import { healthCheck, JsonMode, LlmClient, LlmConfig, resolveChunkChars } from './llm';
 import { loadPullRequest } from './pr';
 import { renderMarkdownReport, ReportMeta } from './report';
 import { CancelledError, runReview } from './review';
@@ -382,7 +382,7 @@ class Controller {
       if (repoInstructions) this.log.info(`Using review guidelines from ${s.instructionsFile}`);
       return runReview(diff.files, {
         llm,
-        maxChunkChars: s.maxChunkChars,
+        maxChunkChars: await resolveChunkChars(llm, s.maxChunkChars, s.llm.maxOutputTokens, this.logger, signal),
         concurrency: s.concurrency,
         minimumSeverity: s.minimumSeverity,
         exclude,
@@ -428,7 +428,7 @@ class Controller {
       const { pr, files, skipped, repoInstructions } = await loadPullRequest(gh, ref.repo, ref.number, s.instructionsFile, this.logger);
       const result = await runReview(files, {
         llm,
-        maxChunkChars: s.maxChunkChars,
+        maxChunkChars: await resolveChunkChars(llm, s.maxChunkChars, s.llm.maxOutputTokens, this.logger, signal),
         concurrency: s.concurrency,
         minimumSeverity: s.minimumSeverity,
         exclude,
