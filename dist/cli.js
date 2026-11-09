@@ -49,6 +49,7 @@ const util_1 = require("util");
 const config_1 = require("./config");
 const diff_1 = require("./diff");
 const format_1 = require("./format");
+const formats_1 = require("./formats");
 const gh_1 = require("./gh");
 const git_1 = require("./git");
 const github_1 = require("./github");
@@ -84,8 +85,10 @@ Posting (PR reviews):
       --no-prompt           Never ask whether to post (default: ask when running in a terminal)
 
 Output:
-  -f, --format <fmt>        text | markdown | json   (default: text in a terminal, markdown when piped)
-  -o, --output <file>       Also write the report to a file (.json for JSON, otherwise Markdown)
+  -f, --format <fmt>        text | markdown | json | sarif | rdjson   (default: text in a terminal, markdown when piped)
+                            sarif: GitHub code scanning and other SARIF tools; rdjson: reviewdog (GitLab, Gitea, …)
+  -o, --output <file>       Also write the report to a file; repeatable. The format follows the extension:
+                            .json, .sarif, .rdjson (or .rdjsonl), otherwise Markdown
       --fail-on <severity>  Exit with code 1 if any finding is at or above this severity (for CI)
   -q, --quiet               No progress output
   -v, --verbose             Log requests and decisions to stderr (DIFF_LEPPARD_DEBUG=1 adds prompts and raw model output)
@@ -239,7 +242,7 @@ async function main(argv) {
             draft: { type: 'boolean' },
             'no-prompt': { type: 'boolean' },
             format: { type: 'string', short: 'f' },
-            output: { type: 'string', short: 'o' },
+            output: { type: 'string', short: 'o', multiple: true },
             'fail-on': { type: 'string' },
             quiet: { type: 'boolean', short: 'q' },
             verbose: { type: 'boolean', short: 'v' },
@@ -462,8 +465,8 @@ async function main(argv) {
     if (failOn && !types_1.SEVERITIES.includes(failOn))
         throw new UsageError(`--fail-on must be one of ${types_1.SEVERITIES.join(', ')}`);
     const format = o.format ?? (isTTY(process.stdout) ? 'text' : 'markdown');
-    if (!['text', 'markdown', 'json'].includes(format))
-        throw new UsageError('--format must be text, markdown or json');
+    if (!['text', 'markdown', 'json', 'sarif', 'rdjson'].includes(format))
+        throw new UsageError('--format must be text, markdown, json, sarif or rdjson');
     const exclude = (0, diff_1.makeExcluder)(s.excludeGlobs);
     const reviewOpts = {
         maxChunkChars: s.maxChunkChars,
@@ -584,15 +587,23 @@ async function main(argv) {
     }
     progress.clear();
     // Output
-    if (format === 'json')
-        process.stdout.write(JSON.stringify(result, null, 2) + '\n');
-    else if (format === 'markdown')
-        process.stdout.write(markdown());
-    else
-        process.stdout.write((0, format_1.renderTerminal)(result, { color: useColor(process.stdout), title }));
-    if (o.output) {
-        await fs_1.promises.writeFile(o.output, o.output.endsWith('.json') ? JSON.stringify(result, null, 2) : markdown());
-        log.info(`wrote ${o.output}`);
+    const render = (fmt) => {
+        if (fmt === 'json')
+            return JSON.stringify(result, null, 2) + '\n';
+        if (fmt === 'sarif')
+            return JSON.stringify((0, formats_1.toSarif)(result, packageVersion()), null, 2) + '\n';
+        if (fmt === 'rdjson')
+            return JSON.stringify((0, formats_1.toRdjson)(result)) + '\n';
+        if (fmt === 'markdown')
+            return markdown();
+        return (0, format_1.renderTerminal)(result, { color: useColor(process.stdout), title });
+    };
+    process.stdout.write(render(format));
+    for (const file of o.output ?? []) {
+        const ext = path.extname(file).toLowerCase();
+        const fmt = ext === '.json' ? 'json' : ext === '.sarif' ? 'sarif' : ext === '.rdjson' || ext === '.rdjsonl' ? 'rdjson' : 'markdown';
+        await fs_1.promises.writeFile(file, render(fmt));
+        log.info(`wrote ${file} (${fmt})`);
     }
     // Posting
     if (posting) {

@@ -49,3 +49,4 @@ jobs:
           echo "findings=${{ steps.lcr.outputs.findings }}"
           test "${{ steps.lcr.outputs.findings }}" = "1"
           grep -q "Mock finding" "${{ steps.lcr.outputs.report }}"
+          jq -e '.runs[0].results | length == 1' "${{ steps.lcr.outputs.sarif }}"

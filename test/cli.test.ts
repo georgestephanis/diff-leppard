@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
@@ -144,6 +144,13 @@ test('CLI reviews local changes against a mock server and honours --fail-on', as
     const md = await run(['local', '-q', '-f', 'markdown']);
     assert.match(md.out, /^# Review of uncommitted changes/);
     assert.equal((await run(['local', '-q', '--concurrency', 'abc'])).code, 2);
+    const outDir = mkdtempSync(path.join(tmpdir(), 'diff-leppard-out-'));
+    const outs = ['r.json', 'r.sarif', 'r.rdjson', 'r.md'].map((n) => path.join(outDir, n));
+    assert.equal((await run(['local', '-q', '-f', 'sarif', ...outs.flatMap((f) => ['-o', f])])).code, 0);
+    assert.equal(JSON.parse(readFileSync(outs[0], 'utf8')).findings.length, 1);
+    assert.equal(JSON.parse(readFileSync(outs[1], 'utf8')).version, '2.1.0');
+    assert.equal(JSON.parse(readFileSync(outs[2], 'utf8')).source.name, 'diff-leppard');
+    assert.match(readFileSync(outs[3], 'utf8'), /^# Review of/);
 
     // Commit ranges, merge-base mode and the pre-commit hook entry point.
     const files = (out: string) => JSON.parse(out).findings.map((f: { file: string; line: number }) => `${f.file}:${f.line}`).sort();

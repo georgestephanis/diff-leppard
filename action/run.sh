@@ -11,7 +11,7 @@ if [[ -n "${DIFF_LEPPARD_EXTRA_HEADERS:-}" ]]; then
   node -e 'for (const v of Object.values(JSON.parse(process.argv[1]))) console.log(`::add-mask::${v}`)' "$DIFF_LEPPARD_EXTRA_HEADERS"
 fi
 
-args=(pr "$INPUT_PR_NUMBER" --repo "$INPUT_REPOSITORY" --no-prompt --format markdown --output "$RUNNER_TEMP/diff-leppard.json")
+args=(pr "$INPUT_PR_NUMBER" --repo "$INPUT_REPOSITORY" --no-prompt --format markdown --output "$RUNNER_TEMP/diff-leppard.json" --output "$RUNNER_TEMP/diff-leppard.sarif")
 case "${INPUT_REVIEW_EVENT:-comment}" in
   comment) args+=(--post) ;;
   request-changes) args+=(--request-changes) ;;
@@ -44,6 +44,7 @@ if [[ -f "$RUNNER_TEMP/diff-leppard.json" ]]; then
   ' "$RUNNER_TEMP/diff-leppard.json"
 fi
 echo "report=$report" >>"$GITHUB_OUTPUT"
+[[ -f "$RUNNER_TEMP/diff-leppard.sarif" ]] && echo "sarif=$RUNNER_TEMP/diff-leppard.sarif" >>"$GITHUB_OUTPUT"
 if [[ $code -eq 1 ]]; then
   echo "::error::Findings at or above '${INPUT_FAIL_ON}' severity."
 fi
