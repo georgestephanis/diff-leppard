@@ -291,7 +291,7 @@ async function readLines(res: Response, onLine: (line: string) => void): Promise
         chunk = await reader.read();
       } catch (e) {
         const name = (e as Error).name;
-        if (name === 'TimeoutError') throw new LlmError('Model request timed out while streaming (raise requestTimeoutSeconds)');
+        if (name === 'TimeoutError') throw new LlmError('Model request timed out while streaming (raise requestTimeoutSeconds, or diffLeppard.requestTimeoutSeconds in VS Code)');
         if (name === 'AbortError') throw new LlmError('Cancelled');
         throw new LlmError(`Stream from model server failed: ${(e as Error).message}`);
       }
