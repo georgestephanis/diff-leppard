@@ -1,0 +1,64 @@
+# Diff Leppard reviewing its own pull requests (dogfooding).
+# Uses the action from main (not from the PR), so a PR can't change the code that runs with these secrets.
+#
+# Secrets: LLM_BASE_URL, LLM_API_KEY. Variable: LLM_MODEL. See README → GitHub Action.
+name: Diff Leppard
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: diff-leppard-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Secrets aren't available to PRs from forks; /review comments are limited to people with write access
+    # so strangers can't spend your GPU time.
+    if: >-
+      (github.event_name == 'pull_request' && !github.event.pull_request.draft &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       startsWith(github.event.comment.body, '/review') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest   # or a self-hosted runner on the same network as your model server
+    timeout-minutes: 30
+    steps:
+      - name: Acknowledge /review
+        if: github.event_name == 'issue_comment'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content=eyes >/dev/null
+
+      # If the model server is on a private network, one option is joining your tailnet first:
+      # - uses: tailscale/github-action@v3
+      #   with:
+      #     oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+      #     oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+      #     tags: tag:ci
+
+      - uses: georgestephanis/diff-leppard@main
+        with:
+          base-url: ${{ secrets.LLM_BASE_URL || vars.LLM_BASE_URL }}
+          model: ${{ vars.LLM_MODEL }}
+          api-key: ${{ secrets.LLM_API_KEY }}
+          pr-number: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+          review-event: comment          # comment | request-changes | none
+          min-severity: minor
+          # fail-on: critical            # make the check fail on critical findings
+          max-chunk-chars: 60000
+          extra-body: '{"chat_template_kwargs": {"enable_thinking": false}}'
+          # extra-instructions: "This is a WordPress plugin: flag unescaped output and missing nonce checks."
