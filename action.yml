@@ -1,4 +1,4 @@
-name: Local Code Review
+name: Diff Leppard Code Review
 description: AI code review of a pull request using your own OpenAI-compatible LLM server (vLLM, Ollama, LM Studio, llama.cpp, …), posted as a PR review.
 author: George Stephanis
 branding:
@@ -81,7 +81,7 @@ runs:
     - uses: actions/setup-node@v5
       with:
         node-version: "22"
-    - name: Build Local Code Review CLI
+    - name: Build Diff Leppard CLI
       shell: bash
       run: '"$GITHUB_ACTION_PATH/action/build.sh"'
     - name: Review pull request
@@ -90,20 +90,20 @@ runs:
       run: '"$GITHUB_ACTION_PATH/action/run.sh"'
       env:
         GH_TOKEN: ${{ inputs.github-token }}
-        LCR_GITHUB_API_URL: ${{ inputs.github-api-url }}
-        LCR_BASE_URL: ${{ inputs.base-url }}
-        LCR_MODEL: ${{ inputs.model }}
-        LCR_API_KEY: ${{ inputs.api-key }}
-        LCR_PROVIDER: ${{ inputs.provider }}
-        LCR_EXTRA_HEADERS: ${{ inputs.extra-headers }}
-        LCR_EXTRA_BODY: ${{ inputs.extra-body }}
-        LCR_JSON_MODE: ${{ inputs.json-mode }}
-        LCR_MIN_SEVERITY: ${{ inputs.min-severity }}
-        LCR_MAX_CHUNK_CHARS: ${{ inputs.max-chunk-chars }}
-        LCR_MAX_OUTPUT_TOKENS: ${{ inputs.max-output-tokens }}
-        LCR_CONCURRENCY: ${{ inputs.concurrency }}
-        LCR_TIMEOUT_SECONDS: ${{ inputs.timeout-seconds }}
-        LCR_EXTRA_INSTRUCTIONS: ${{ inputs.extra-instructions }}
+        DIFF_LEPPARD_GITHUB_API_URL: ${{ inputs.github-api-url }}
+        DIFF_LEPPARD_BASE_URL: ${{ inputs.base-url }}
+        DIFF_LEPPARD_MODEL: ${{ inputs.model }}
+        DIFF_LEPPARD_API_KEY: ${{ inputs.api-key }}
+        DIFF_LEPPARD_PROVIDER: ${{ inputs.provider }}
+        DIFF_LEPPARD_EXTRA_HEADERS: ${{ inputs.extra-headers }}
+        DIFF_LEPPARD_EXTRA_BODY: ${{ inputs.extra-body }}
+        DIFF_LEPPARD_JSON_MODE: ${{ inputs.json-mode }}
+        DIFF_LEPPARD_MIN_SEVERITY: ${{ inputs.min-severity }}
+        DIFF_LEPPARD_MAX_CHUNK_CHARS: ${{ inputs.max-chunk-chars }}
+        DIFF_LEPPARD_MAX_OUTPUT_TOKENS: ${{ inputs.max-output-tokens }}
+        DIFF_LEPPARD_CONCURRENCY: ${{ inputs.concurrency }}
+        DIFF_LEPPARD_TIMEOUT_SECONDS: ${{ inputs.timeout-seconds }}
+        DIFF_LEPPARD_EXTRA_INSTRUCTIONS: ${{ inputs.extra-instructions }}
         INPUT_PR_NUMBER: ${{ inputs.pr-number }}
         INPUT_REPOSITORY: ${{ inputs.repository }}
         INPUT_REVIEW_EVENT: ${{ inputs.review-event }}

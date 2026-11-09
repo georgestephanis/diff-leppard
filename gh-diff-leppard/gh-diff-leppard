@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# gh extension: `gh diff-leppard [<pr>|local|staged|models|test|config] [options]`
+# Reviews GitHub PRs (or local changes) with your self-hosted LLM via the diff-leppard CLI.
+#
+# Install from a clone of this repo:   npm install && cd gh-diff-leppard && gh extension install .
+# Or put `diff-leppard` on PATH:  npm install -g github:georgestephanis/diff-leppard
+set -euo pipefail
+
+if [[ -n "${LOCAL_CODE_REVIEW_BIN:-}" ]]; then
+  exec "$LOCAL_CODE_REVIEW_BIN" "$@"
+fi
+
+# Resolve this script's real location (gh installs local extensions as a symlink).
+src="${BASH_SOURCE[0]}"
+while [[ -L "$src" ]]; do
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  src="$(readlink "$src")"
+  [[ "$src" != /* ]] && src="$dir/$src"
+done
+here="$(cd -P "$(dirname "$src")" && pwd)"
+cli="$here/../out/src/cli.js"
+
+if [[ -f "$cli" ]]; then
+  exec node "$cli" "$@"
+elif command -v diff-leppard >/dev/null 2>&1; then
+  exec diff-leppard "$@"
+else
+  echo "gh diff-leppard: the CLI isn't built. Run 'npm install' in $(cd "$here/.." && pwd)," >&2
+  echo "or install it globally: npm install -g github:georgestephanis/diff-leppard" >&2
+  exit 2
+fi

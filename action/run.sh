@@ -5,13 +5,13 @@ if [[ -z "${INPUT_PR_NUMBER:-}" ]]; then
   exit 2
 fi
 # Keep the server address and credentials out of (possibly public) logs, even if passed as plain variables.
-[[ -n "${LCR_API_KEY:-}" ]] && echo "::add-mask::$LCR_API_KEY"
-[[ -n "${LCR_BASE_URL:-}" ]] && echo "::add-mask::$LCR_BASE_URL"
-if [[ -n "${LCR_EXTRA_HEADERS:-}" ]]; then
-  node -e 'for (const v of Object.values(JSON.parse(process.argv[1]))) console.log(`::add-mask::${v}`)' "$LCR_EXTRA_HEADERS"
+[[ -n "${DIFF_LEPPARD_API_KEY:-}" ]] && echo "::add-mask::$DIFF_LEPPARD_API_KEY"
+[[ -n "${DIFF_LEPPARD_BASE_URL:-}" ]] && echo "::add-mask::$DIFF_LEPPARD_BASE_URL"
+if [[ -n "${DIFF_LEPPARD_EXTRA_HEADERS:-}" ]]; then
+  node -e 'for (const v of Object.values(JSON.parse(process.argv[1]))) console.log(`::add-mask::${v}`)' "$DIFF_LEPPARD_EXTRA_HEADERS"
 fi
 
-args=(pr "$INPUT_PR_NUMBER" --repo "$INPUT_REPOSITORY" --no-prompt --format markdown --output "$RUNNER_TEMP/local-code-review.json")
+args=(pr "$INPUT_PR_NUMBER" --repo "$INPUT_REPOSITORY" --no-prompt --format markdown --output "$RUNNER_TEMP/diff-leppard.json")
 case "${INPUT_REVIEW_EVENT:-comment}" in
   comment) args+=(--post) ;;
   request-changes) args+=(--request-changes) ;;
@@ -20,7 +20,7 @@ case "${INPUT_REVIEW_EVENT:-comment}" in
 esac
 [[ -n "${INPUT_FAIL_ON:-}" ]] && args+=(--fail-on "$INPUT_FAIL_ON")
 
-report="$RUNNER_TEMP/local-code-review.md"
+report="$RUNNER_TEMP/diff-leppard.md"
 set +e
 node "$GITHUB_ACTION_PATH/out/src/cli.js" "${args[@]}" >"$report"
 code=$?
@@ -29,7 +29,7 @@ set -e
 if [[ -s "$report" ]]; then
   cat "$report" >>"$GITHUB_STEP_SUMMARY"
 fi
-if [[ -f "$RUNNER_TEMP/local-code-review.json" ]]; then
+if [[ -f "$RUNNER_TEMP/diff-leppard.json" ]]; then
   node -e '
     const r = require(process.argv[1]);
     const blocking = r.findings.filter((f) => f.severity === "critical" || f.severity === "major").length;
@@ -39,7 +39,7 @@ if [[ -f "$RUNNER_TEMP/local-code-review.json" ]]; then
       const esc = (s) => String(s).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
       console.log(`::${lvl} title=${esc(`[${f.severity}] ${f.title}`)}::${esc(`${f.file}${f.line ? ":" + f.line : ""} ${f.body}`)}`);
     }
-  ' "$RUNNER_TEMP/local-code-review.json"
+  ' "$RUNNER_TEMP/diff-leppard.json"
 fi
 echo "report=$report" >>"$GITHUB_OUTPUT"
 if [[ $code -eq 1 ]]; then

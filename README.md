@@ -1,10 +1,12 @@
-# Local Code Review (VS Code extension)
+# Diff Leppard 🐆
 
-AI code review using **your own model server**: vLLM, Ollama, LM Studio, llama.cpp, SGLang, LocalAI, or anything else that speaks the OpenAI `/v1/chat/completions` API. Code goes only to your server (and to GitHub, if you post the review).
+> *Pour some suggestions on me.*
+
+AI code review on **your own model server**, in VS Code, on the command line, through `gh`, or as a GitHub Action. It works with vLLM, Ollama, LM Studio, llama.cpp, SGLang, LocalAI, or anything else that speaks the OpenAI `/v1/chat/completions` API. Your code goes only to your server, and to GitHub if you post the review.
 
 - **Review uncommitted changes**, including untracked files, or **staged changes only**. Findings show up in the Problems panel and in a Markdown report.
 - **Review a GitHub pull request** by picking from the repo's open PRs or pasting a number or URL.
-- **Run it outside VS Code**: as a CLI (`local-code-review`), as a `gh` extension (`gh local-review 123`), or as a **GitHub Action** that reviews PRs in any repo.
+- **Run it outside VS Code**: as a CLI (`diff-leppard`), as a `gh` extension (`gh diff-leppard 123`), or as a **GitHub Action** that reviews PRs in any repo.
 - **Post the result as a real GitHub PR review.** Comments go inline on the changed lines, with a summary in the review body. You can submit it right away, request changes when there are blocking findings, or create a **pending (draft) review** so you can delete bad comments before submitting it yourself.
 
 ## Screenshots
@@ -13,16 +15,12 @@ AI code review using **your own model server**: vLLM, Ollama, LM Studio, llama.c
 
 ![Review of uncommitted changes with findings in the editor, Problems panel and report](docs/screenshots/local-review.png)
 
-**Posting to a pull request.** The review lands on GitHub with a summary and inline comments on the changed lines. See it live on [demo PR #1](https://github.com/georgestephanis/local-code-review-vscode/pull/1); every finding there came from a self-hosted 27B model via vLLM.
+**Posting to a pull request.** The review lands on GitHub with a summary and inline comments on the changed lines. See it live on [demo PR #1](https://github.com/georgestephanis/diff-leppard/pull/1); every finding there came from a self-hosted 27B model via vLLM.
 
 ![GitHub PR review posted by the extension, with inline comments](docs/screenshots/github-review.png)
 
 <details>
 <summary>More screenshots</summary>
-
-The PR report after posting:
-
-![PR review report with a "Review posted" notification](docs/screenshots/pr-report.png)
 
 Progress while the model is working (cancellable):
 
@@ -42,15 +40,15 @@ Settings:
 
 ```bash
 npm install
-npm run package                                   # -> local-code-review.vsix
-code --install-extension local-code-review.vsix   # or: Extensions view → … → Install from VSIX
+npm run package                                   # -> diff-leppard.vsix
+code --install-extension diff-leppard.vsix   # or: Extensions view → … → Install from VSIX
 ```
 
 For development, open this folder in VS Code and press <kbd>F5</kbd> to launch an Extension Development Host.
 
 ## Set up your model server
 
-Open **Settings → Extensions → Local Code Review**, or run `Local Code Review: Open Settings`. Then run **`Local Code Review: Test LLM Connection`**.
+Open **Settings → Extensions → Diff Leppard**, or run `Diff Leppard: Open Settings`. Then run **`Diff Leppard: Test LLM Connection`**.
 
 | Server | `provider` | `baseUrl` |
 | --- | --- | --- |
@@ -60,18 +58,18 @@ Open **Settings → Extensions → Local Code Review**, or run `Local Code Revie
 | LM Studio | `openai` | `http://localhost:1234/v1` |
 | llama.cpp `llama-server` | `openai` | `http://localhost:8080/v1` |
 
-Leave `model` empty to pick from the server's model list (or run **Select Model**). If your server or proxy needs a key, run **Set LLM API Key**. The key is kept in VS Code's secret storage and sent as `Authorization: Bearer …`. You can also put the key in settings with `"localCodeReview.extraHeaders": {"Authorization": "Bearer <key>"}`. Extra request-body fields (sampling options, `chat_template_kwargs`, …) go in `localCodeReview.extraBody`.
+Leave `model` empty to pick from the server's model list (or run **Select Model**). If your server or proxy needs a key, run **Set LLM API Key**. The key is kept in VS Code's secret storage and sent as `Authorization: Bearer …`. You can also put the key in settings with `"diffLeppard.extraHeaders": {"Authorization": "Bearer <key>"}`. Extra request-body fields (sampling options, `chat_template_kwargs`, …) go in `diffLeppard.extraBody`.
 
 Example `settings.json`:
 
 ```jsonc
 {
-  "localCodeReview.provider": "openai",
-  "localCodeReview.baseUrl": "http://gpu-box:8000/v1",
-  "localCodeReview.model": "Qwen/Qwen2.5-Coder-32B-Instruct",
-  "localCodeReview.maxChunkChars": 60000,   // fits a 32k-context model
-  "localCodeReview.concurrency": 2,         // vLLM batches concurrent requests well
-  "localCodeReview.jsonMode": "json_schema" // vLLM structured outputs: most reliable JSON
+  "diffLeppard.provider": "openai",
+  "diffLeppard.baseUrl": "http://gpu-box:8000/v1",
+  "diffLeppard.model": "Qwen/Qwen2.5-Coder-32B-Instruct",
+  "diffLeppard.maxChunkChars": 60000,   // fits a 32k-context model
+  "diffLeppard.concurrency": 2,         // vLLM batches concurrent requests well
+  "diffLeppard.jsonMode": "json_schema" // vLLM structured outputs: most reliable JSON
 }
 ```
 
@@ -88,12 +86,12 @@ Large diffs are split into chunks of `maxChunkChars` characters (about 3.5 chara
 | 32k | 60000 |
 | 128k | 300000 |
 
-**Ollama users:** Ollama silently truncates prompts longer than its context window, which is small by default. Use `provider: "ollama"` so the extension can set `num_ctx` (`localCodeReview.ollamaNumCtx`), or start Ollama with `OLLAMA_CONTEXT_LENGTH=16384`.
+**Ollama users:** Ollama silently truncates prompts longer than its context window, which is small by default. Use `provider: "ollama"` so the extension can set `num_ctx` (`diffLeppard.ollamaNumCtx`), or start Ollama with `OLLAMA_CONTEXT_LENGTH=16384`.
 
-**Reasoning models** (Qwen3, DeepSeek-R1, gpt-oss, …) work too. `<think>` blocks and `reasoning` streams are ignored. However, they can think for thousands of tokens before they answer, which counts against `maxOutputTokens`. With guided JSON (`json_schema`), some never get to the answer at all. To skip the thinking on Qwen3-style models served by vLLM or SGLang, use `localCodeReview.extraBody`:
+**Reasoning models** (Qwen3, DeepSeek-R1, gpt-oss, …) work too. `<think>` blocks and `reasoning` streams are ignored. However, they can think for thousands of tokens before they answer, which counts against `maxOutputTokens`. With guided JSON (`json_schema`), some never get to the answer at all. To skip the thinking on Qwen3-style models served by vLLM or SGLang, use `diffLeppard.extraBody`:
 
 ```jsonc
-"localCodeReview.extraBody": { "chat_template_kwargs": { "enable_thinking": false } }
+"diffLeppard.extraBody": { "chat_template_kwargs": { "enable_thinking": false } }
 // Ollama: { "think": false }
 ```
 
@@ -111,7 +109,7 @@ In testing, a 27B Qwen model with thinking off reviewed a small diff in about 30
 | **Clear Findings** | Remove findings from the Problems panel |
 | Select Model / Test LLM Connection / Set LLM API Key | Setup helpers |
 
-Each review writes a Markdown report and opens it in the preview. Local reviews also put findings in the **Problems** panel (critical = error, major = warning, minor = info, nit = hint). A PR review does the same when your local `HEAD` is the PR's head commit. Raw prompts and model output are logged to the **Local Code Review** output channel at Debug level (`Developer: Set Log Level…`).
+Each review writes a Markdown report and opens it in the preview. Local reviews also put findings in the **Problems** panel (critical = error, major = warning, minor = info, nit = hint). A PR review does the same when your local `HEAD` is the PR's head commit. Raw prompts and model output are logged to the **Diff Leppard** output channel at Debug level (`Developer: Set Log Level…`).
 
 ### Posting reviews to GitHub
 
@@ -131,42 +129,42 @@ Turn on `github.suggestionBlocks` to render proposed fixes as one-click ```` ```
 The same review engine ships as a CLI with no runtime dependencies:
 
 ```bash
-npm install -g github:georgestephanis/local-code-review-vscode   # installs `local-code-review`
+npm install -g github:georgestephanis/diff-leppard   # installs `diff-leppard`
 
-local-code-review test                     # check the server connection
-local-code-review pr 123                   # review PR #123 of the current repo (asks whether to post)
-local-code-review pr owner/repo#123 --post # review and post as a comment review
-local-code-review pr --draft               # PR for the current branch → pending review you edit on GitHub
-local-code-review local                    # uncommitted changes in the current repo
-local-code-review local --staged --fail-on major   # pre-commit / CI style: exit 1 on major+ findings
-local-code-review pr 123 -f json           # machine-readable output (also: -f markdown, -o report.md)
+diff-leppard test                     # check the server connection
+diff-leppard pr 123                   # review PR #123 of the current repo (asks whether to post)
+diff-leppard pr owner/repo#123 --post # review and post as a comment review
+diff-leppard pr --draft               # PR for the current branch → pending review you edit on GitHub
+diff-leppard local                    # uncommitted changes in the current repo
+diff-leppard local --staged --fail-on major   # pre-commit / CI style: exit 1 on major+ findings
+diff-leppard pr 123 -f json           # machine-readable output (also: -f markdown, -o report.md)
 ```
 
 ### As a `gh` extension
 
 ```bash
-git clone https://github.com/georgestephanis/local-code-review-vscode && cd local-code-review-vscode
+git clone https://github.com/georgestephanis/diff-leppard && cd diff-leppard
 npm install
-cd gh-local-review && gh extension install .
+cd gh-diff-leppard && gh extension install .
 
-gh local-review              # PR for the current branch
-gh local-review 123 --post
-gh local-review local        # uncommitted changes
+gh diff-leppard              # PR for the current branch
+gh diff-leppard 123 --post
+gh diff-leppard local        # uncommitted changes
 ```
 
-If you'd rather not install an extension, an alias does the same once the CLI is on your `PATH`: `gh alias set --shell review 'local-code-review pr "$@"'`, then `gh review 123`.
+If you'd rather not install an extension, an alias does the same once the CLI is on your `PATH`: `gh alias set --shell review 'diff-leppard pr "$@"'`, then `gh review 123`.
 
 ### Configuration
 
-The CLI reads the same settings as the extension (drop the `localCodeReview.` prefix). It checks, lowest priority first:
+The CLI reads the same settings as the extension (drop the `diffLeppard.` prefix). It checks, lowest priority first:
 
-1. `~/.config/local-code-review/config.json` (yours; may hold `apiKey`)
-2. `<repo>/.local-code-review.json` (shared per repo; may not hold `apiKey`)
-3. `LCR_*` environment variables
+1. `~/.config/diff-leppard/config.json` (yours; may hold `apiKey`)
+2. `<repo>/.diff-leppard.json` (shared per repo; may not hold `apiKey`)
+3. `DIFF_LEPPARD_*` environment variables
 4. command-line flags
 
 ```jsonc
-// ~/.config/local-code-review/config.json
+// ~/.config/diff-leppard/config.json
 {
   "baseUrl": "http://gpu-box:8000/v1",
   "model": "Qwen/Qwen2.5-Coder-32B-Instruct",
@@ -176,11 +174,11 @@ The CLI reads the same settings as the extension (drop the `localCodeReview.` pr
 }
 ```
 
-Run `local-code-review config` to see the effective settings, with secrets redacted, and where each came from. For GitHub it uses `GH_TOKEN`/`GITHUB_TOKEN`, or else `gh auth token`. `local-code-review --help` lists every flag and environment variable.
+Run `diff-leppard config` to see the effective settings, with secrets redacted, and where each came from. For GitHub it uses `GH_TOKEN`/`GITHUB_TOKEN`, or else `gh auth token`. `diff-leppard --help` lists every flag and environment variable.
 
 ## GitHub Action
 
-Other repositories can have PRs reviewed by any OpenAI-compatible host. Copy [`examples/workflows/local-code-review.yml`](examples/workflows/local-code-review.yml) into `.github/workflows/`, then set:
+Other repositories can have PRs reviewed by any OpenAI-compatible host. Copy [`examples/workflows/diff-leppard.yml`](examples/workflows/diff-leppard.yml) into `.github/workflows/`, then set:
 
 - `LLM_BASE_URL`, e.g. `https://llm.example.com/v1`. Make this a **secret** if the address is private: secrets are masked in logs, and public repos have public logs. A plain **variable** also works; the secret wins if both exist.
 - **variable** `LLM_MODEL` (optional)
@@ -198,7 +196,7 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: georgestephanis/local-code-review-vscode@main
+      - uses: georgestephanis/diff-leppard@main
         with:
           base-url: ${{ secrets.LLM_BASE_URL || vars.LLM_BASE_URL }}
           model: ${{ vars.LLM_MODEL }}
@@ -221,14 +219,14 @@ Things to know:
 
 ## Project-specific guidelines
 
-Add `.github/code-review-instructions.md` (configurable via `localCodeReview.instructionsFile`) to a repo and its contents get added to the prompt. For PRs it's read from the base branch. For example:
+Add `.github/code-review-instructions.md` (configurable via `diffLeppard.instructionsFile`) to a repo and its contents get added to the prompt. For PRs it's read from the base branch. For example:
 
 ```md
 - This is a WordPress plugin. Flag output that isn't escaped (esc_html, esc_attr, wp_kses), missing nonce checks, and missing capability checks.
 - Don't comment on PHPCS formatting; CI enforces it.
 ```
 
-For personal or global rules, use `localCodeReview.extraInstructions`.
+For personal or global rules, use `diffLeppard.extraInstructions`.
 
 ## Other settings
 

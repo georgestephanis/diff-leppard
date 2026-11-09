@@ -20,7 +20,7 @@ import { renderMarkdownReport, ReportMeta } from './report';
 import { CancelledError, runReview } from './review';
 import { Logger, ReviewResult, Severity } from './types';
 
-const SECRET_KEY = 'localCodeReview.apiKey';
+const SECRET_KEY = 'diffLeppard.apiKey';
 const MAX_UNTRACKED_BYTES = 256 * 1024;
 
 interface Settings {
@@ -44,7 +44,7 @@ interface Settings {
 }
 
 function readSettings(): Settings {
-  const c = vscode.workspace.getConfiguration('localCodeReview');
+  const c = vscode.workspace.getConfiguration('diffLeppard');
   return {
     llm: {
       provider: c.get<'openai' | 'ollama'>('provider', 'openai'),
@@ -94,20 +94,20 @@ class Controller {
   private last?: LastReview;
 
   constructor(private readonly ctx: vscode.ExtensionContext) {
-    this.log = vscode.window.createOutputChannel('Local Code Review', { log: true });
+    this.log = vscode.window.createOutputChannel('Diff Leppard', { log: true });
     this.logger = {
       info: (m) => this.log.info(m),
       warn: (m) => this.log.warn(m),
       error: (m) => this.log.error(m),
       debug: (m) => this.log.debug(m),
     };
-    this.diagnostics = vscode.languages.createDiagnosticCollection('localCodeReview');
+    this.diagnostics = vscode.languages.createDiagnosticCollection('diffLeppard');
     this.status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-    this.status.command = 'localCodeReview.showMenu';
+    this.status.command = 'diffLeppard.showMenu';
     ctx.subscriptions.push(this.log, this.diagnostics, this.status);
     this.updateStatus();
     ctx.subscriptions.push(
-      vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('localCodeReview') && this.updateStatus()),
+      vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('diffLeppard') && this.updateStatus()),
     );
   }
 
@@ -115,10 +115,10 @@ class Controller {
     const s = readSettings();
     if (this.running) {
       this.status.text = '$(sync~spin) Reviewing…';
-      this.status.tooltip = 'Local Code Review is running';
+      this.status.tooltip = 'Diff Leppard is running';
     } else {
       this.status.text = '$(checklist) Review';
-      this.status.tooltip = `Local Code Review — ${s.llm.model || '(no model selected)'} @ ${s.llm.baseUrl}`;
+      this.status.tooltip = `Diff Leppard — ${s.llm.model || '(no model selected)'} @ ${s.llm.baseUrl}`;
     }
     if (s.showStatusBar || this.running) this.status.show();
     else this.status.hide();
@@ -157,7 +157,7 @@ class Controller {
       { title: 'Select the model to use for code reviews', placeHolder: 'Model' },
     );
     if (!picked) return undefined;
-    const c = vscode.workspace.getConfiguration('localCodeReview');
+    const c = vscode.workspace.getConfiguration('diffLeppard');
     const insp = c.inspect<string>('model');
     const target =
       insp?.workspaceFolderValue !== undefined
@@ -180,7 +180,7 @@ class Controller {
       return;
     }
     const m = await this.pickModel(models);
-    if (m) vscode.window.showInformationMessage(`Local Code Review will use ${m}.`);
+    if (m) vscode.window.showInformationMessage(`Diff Leppard will use ${m}.`);
   }
 
   async testConnection(): Promise<void> {
@@ -393,7 +393,7 @@ class Controller {
     const what = stagedOnly ? 'staged changes' : 'uncommitted changes';
     this.log.info(`=== Reviewing ${what} in ${root}`);
 
-    const result = await this.withReviewProgress(`Local Code Review: ${what}`, async (signal, report) => {
+    const result = await this.withReviewProgress(`Diff Leppard: ${what}`, async (signal, report) => {
       report('Collecting diff…');
       const diff = await getLocalDiff(root, {
         stagedOnly,
@@ -451,7 +451,7 @@ class Controller {
     const label = `${ref.repo.owner}/${ref.repo.repo}#${ref.number}`;
     this.log.info(`=== Reviewing ${label}`);
 
-    const out = await this.withReviewProgress(`Local Code Review: ${label}`, async (signal, report) => {
+    const out = await this.withReviewProgress(`Diff Leppard: ${label}`, async (signal, report) => {
       report('Fetching pull request…');
       const { pr, files, skipped, repoInstructions } = await loadPullRequest(gh, ref.repo, ref.number, s.instructionsFile, this.logger);
       const result = await runReview(files, {
@@ -549,8 +549,8 @@ class Controller {
     meta.reportDir = dir.fsPath;
     await vscode.workspace.fs.writeFile(reportUri, Buffer.from(renderMarkdownReport(result, meta), 'utf8'));
     this.last = { result, meta, reportUri, pr };
-    await vscode.commands.executeCommand('setContext', 'localCodeReview.hasReview', true);
-    await vscode.commands.executeCommand('setContext', 'localCodeReview.hasPrReview', !!pr);
+    await vscode.commands.executeCommand('setContext', 'diffLeppard.hasReview', true);
+    await vscode.commands.executeCommand('setContext', 'diffLeppard.hasPrReview', !!pr);
     await this.openReport();
     if (result.errors.length) {
       vscode.window
@@ -582,7 +582,7 @@ class Controller {
         `[${f.severity}] ${f.title}${f.body && f.body !== f.title ? `\n\n${f.body}` : ''}${f.suggestion ? `\n\nSuggested change:\n${f.suggestion}` : ''}`,
         sev[f.severity],
       );
-      d.source = 'Local Code Review';
+      d.source = 'Diff Leppard';
       if (f.category) d.code = f.category;
       const abs = path.join(root, f.file);
       if (!byFile.has(abs)) byFile.set(abs, []);
@@ -597,19 +597,19 @@ class Controller {
 
   async menu(): Promise<void> {
     const items: (vscode.QuickPickItem & { cmd: string })[] = [
-      { label: '$(checklist) Review uncommitted changes', cmd: 'localCodeReview.reviewUncommitted' },
-      { label: '$(diff-added) Review staged changes', cmd: 'localCodeReview.reviewStaged' },
-      { label: '$(git-pull-request) Review a GitHub pull request…', cmd: 'localCodeReview.reviewPullRequest' },
+      { label: '$(checklist) Review uncommitted changes', cmd: 'diffLeppard.reviewUncommitted' },
+      { label: '$(diff-added) Review staged changes', cmd: 'diffLeppard.reviewStaged' },
+      { label: '$(git-pull-request) Review a GitHub pull request…', cmd: 'diffLeppard.reviewPullRequest' },
     ];
-    if (this.last) items.push({ label: '$(preview) Open last report', cmd: 'localCodeReview.openLastReport' });
-    if (this.last?.pr) items.push({ label: '$(comment-discussion) Post last review to GitHub', cmd: 'localCodeReview.postLastReview' });
+    if (this.last) items.push({ label: '$(preview) Open last report', cmd: 'diffLeppard.openLastReport' });
+    if (this.last?.pr) items.push({ label: '$(comment-discussion) Post last review to GitHub', cmd: 'diffLeppard.postLastReview' });
     items.push(
-      { label: '$(clear-all) Clear findings', cmd: 'localCodeReview.clearFindings' },
-      { label: '$(server) Select model', cmd: 'localCodeReview.selectModel', description: readSettings().llm.model },
-      { label: '$(plug) Test LLM connection', cmd: 'localCodeReview.testConnection' },
-      { label: '$(gear) Settings', cmd: 'localCodeReview.openSettings' },
+      { label: '$(clear-all) Clear findings', cmd: 'diffLeppard.clearFindings' },
+      { label: '$(server) Select model', cmd: 'diffLeppard.selectModel', description: readSettings().llm.model },
+      { label: '$(plug) Test LLM connection', cmd: 'diffLeppard.testConnection' },
+      { label: '$(gear) Settings', cmd: 'diffLeppard.openSettings' },
     );
-    const p = await vscode.window.showQuickPick(items, { title: 'Local Code Review' });
+    const p = await vscode.window.showQuickPick(items, { title: 'Diff Leppard' });
     if (p) await vscode.commands.executeCommand(p.cmd);
   }
 
@@ -625,9 +625,9 @@ class Controller {
         }
         const msg = (e as Error).message ?? String(e);
         this.log.error(msg);
-        const c = await vscode.window.showErrorMessage(`Local Code Review: ${msg}`, 'Show Log', 'Settings');
+        const c = await vscode.window.showErrorMessage(`Diff Leppard: ${msg}`, 'Show Log', 'Settings');
         if (c === 'Show Log') this.log.show();
-        else if (c === 'Settings') vscode.commands.executeCommand('localCodeReview.openSettings');
+        else if (c === 'Settings') vscode.commands.executeCommand('diffLeppard.openSettings');
       }
     };
   }
@@ -638,18 +638,18 @@ export function activate(context: vscode.ExtensionContext): void {
   const reg = (id: string, fn: (...args: any[]) => Promise<void> | void) =>
     context.subscriptions.push(vscode.commands.registerCommand(id, c.wrap(fn)));
 
-  reg('localCodeReview.reviewUncommitted', () => c.reviewLocal(false));
-  reg('localCodeReview.reviewStaged', () => c.reviewLocal(true));
-  reg('localCodeReview.reviewPullRequest', (arg?: unknown) => c.reviewPullRequest(arg));
-  reg('localCodeReview.postLastReview', () => c.postLast());
-  reg('localCodeReview.openLastReport', () => c.openReport());
-  reg('localCodeReview.selectModel', () => c.selectModel());
-  reg('localCodeReview.testConnection', () => c.testConnection());
-  reg('localCodeReview.setApiKey', () => c.setApiKey());
-  reg('localCodeReview.clearFindings', () => c.clear());
-  reg('localCodeReview.showMenu', () => c.menu());
-  reg('localCodeReview.openSettings', async () => {
-    await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:local.local-code-review');
+  reg('diffLeppard.reviewUncommitted', () => c.reviewLocal(false));
+  reg('diffLeppard.reviewStaged', () => c.reviewLocal(true));
+  reg('diffLeppard.reviewPullRequest', (arg?: unknown) => c.reviewPullRequest(arg));
+  reg('diffLeppard.postLastReview', () => c.postLast());
+  reg('diffLeppard.openLastReport', () => c.openReport());
+  reg('diffLeppard.selectModel', () => c.selectModel());
+  reg('diffLeppard.testConnection', () => c.testConnection());
+  reg('diffLeppard.setApiKey', () => c.setApiKey());
+  reg('diffLeppard.clearFindings', () => c.clear());
+  reg('diffLeppard.showMenu', () => c.menu());
+  reg('diffLeppard.openSettings', async () => {
+    await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:georgestephanis.diff-leppard');
   });
 }
 

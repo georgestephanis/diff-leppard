@@ -1,9 +1,9 @@
 /**
  * Command-line interface: review GitHub PRs or local changes with a self-hosted LLM.
  *
- *   local-code-review pr 123 --post
- *   local-code-review local
- *   gh local-review 123          (via the gh extension in ./gh-local-review)
+ *   diff-leppard pr 123 --post
+ *   diff-leppard local
+ *   gh diff-leppard 123          (via the gh extension in ./gh-diff-leppard)
  */
 import { execFile } from 'child_process';
 import { promises as fs } from 'fs';
@@ -21,18 +21,18 @@ import { renderMarkdownReport } from './report';
 import { CancelledError, runReview } from './review';
 import { Logger, ReviewResult, Severity, SEVERITIES, severityRank } from './types';
 
-const HELP = `local-code-review — AI code review with your own LLM server (vLLM, Ollama, LM Studio, llama.cpp, …)
+const HELP = `diff-leppard — AI code review with your own LLM server (vLLM, Ollama, LM Studio, llama.cpp, …)
 
 Usage:
-  local-code-review pr [<number> | <url> | <owner/repo#number>] [options]
+  diff-leppard pr [<number> | <url> | <owner/repo#number>] [options]
       Review a GitHub pull request. With no argument, reviews the PR for the current branch.
-  local-code-review local [--staged] [options]
+  diff-leppard local [--staged] [options]
       Review uncommitted changes (or only staged changes) in the current git repo.
-  local-code-review models          List models on the configured server
-  local-code-review test            Check the server connection with a tiny request
-  local-code-review config          Show the effective configuration and where it came from
+  diff-leppard models          List models on the configured server
+  diff-leppard test            Check the server connection with a tiny request
+  diff-leppard config          Show the effective configuration and where it came from
 
-  As a gh extension:  gh local-review [<pr>] [options]   (same options; "gh local-review local" for local changes)
+  As a gh extension:  gh diff-leppard [<pr>] [options]   (same options; "gh diff-leppard local" for local changes)
 
 Posting (PR reviews):
       --post                Post the review as a comment review
@@ -45,13 +45,13 @@ Output:
   -o, --output <file>       Also write the report to a file (.json for JSON, otherwise Markdown)
       --fail-on <severity>  Exit with code 1 if any finding is at or above this severity (for CI)
   -q, --quiet               No progress output
-  -v, --verbose             Log requests and decisions to stderr (LCR_DEBUG=1 adds prompts and raw model output)
+  -v, --verbose             Log requests and decisions to stderr (DIFF_LEPPARD_DEBUG=1 adds prompts and raw model output)
 
 Model server (override config files):
       --base-url <url>      e.g. http://gpu-box:8000/v1 (vLLM) or http://gpu-box:11434 (with --provider ollama)
   -m, --model <name>
       --provider <p>        openai | ollama
-      --api-key <key>       (or LCR_API_KEY)
+      --api-key <key>       (or DIFF_LEPPARD_API_KEY)
       --header <K: V>       Extra request header (repeatable)
       --extra-body <json>   Extra request body fields, e.g. '{"chat_template_kwargs":{"enable_thinking":false}}'
       --json-mode <mode>    json_object | json_schema | none
@@ -67,12 +67,12 @@ Other:
   -h, --help
       --version
 
-Config files (JSON, same keys as the VS Code settings without the "localCodeReview." prefix):
+Config files (JSON, same keys as the VS Code settings without the "diffLeppard." prefix):
   ${userConfigPath()}   (user; may contain apiKey)
   <repo>/${REPO_CONFIG_FILE}   (per repo; must not contain apiKey)
-Environment: LCR_BASE_URL, LCR_MODEL, LCR_PROVIDER, LCR_API_KEY, LCR_EXTRA_BODY, LCR_EXTRA_HEADERS (JSON),
-  LCR_JSON_MODE, LCR_MIN_SEVERITY, LCR_MAX_CHUNK_CHARS, LCR_MAX_OUTPUT_TOKENS, LCR_TIMEOUT_SECONDS, LCR_CONCURRENCY,
-  LCR_EXTRA_INSTRUCTIONS, LCR_GITHUB_API_URL, LCR_CONFIG. GitHub token: GH_TOKEN / GITHUB_TOKEN, else \`gh auth token\`.
+Environment: DIFF_LEPPARD_BASE_URL, DIFF_LEPPARD_MODEL, DIFF_LEPPARD_PROVIDER, DIFF_LEPPARD_API_KEY, DIFF_LEPPARD_EXTRA_BODY, DIFF_LEPPARD_EXTRA_HEADERS (JSON),
+  DIFF_LEPPARD_JSON_MODE, DIFF_LEPPARD_MIN_SEVERITY, DIFF_LEPPARD_MAX_CHUNK_CHARS, DIFF_LEPPARD_MAX_OUTPUT_TOKENS, DIFF_LEPPARD_TIMEOUT_SECONDS, DIFF_LEPPARD_CONCURRENCY,
+  DIFF_LEPPARD_EXTRA_INSTRUCTIONS, DIFF_LEPPARD_GITHUB_API_URL, DIFF_LEPPARD_CONFIG. GitHub token: GH_TOKEN / GITHUB_TOKEN, else \`gh auth token\`.
 
 Exit codes: 0 success · 1 findings at/above --fail-on · 2 error · 130 cancelled
 `;
@@ -133,7 +133,7 @@ async function defaultRepo(cwd: string, root: string | undefined, host: string):
 }
 
 function makeLogger(verbose: boolean, quiet: boolean, progress: Progress): Logger {
-  const debug = !!process.env.LCR_DEBUG;
+  const debug = !!process.env.DIFF_LEPPARD_DEBUG;
   const write = (prefix: string, m: string) => {
     progress.clear();
     process.stderr.write(`${prefix}${m}\n`);
@@ -253,7 +253,7 @@ export async function main(argv: string[]): Promise<number> {
   let command = positionals[0] ?? 'pr';
   let rest = positionals.slice(1);
   if (!['pr', 'local', 'staged', 'models', 'test', 'config', 'help'].includes(command)) {
-    // `local-code-review 123` / `gh local-review https://…` → pr
+    // `diff-leppard 123` / `gh diff-leppard https://…` → pr
     command = 'pr';
     rest = positionals;
   }

@@ -1,16 +1,16 @@
 {
-  "name": "local-code-review",
-  "displayName": "Local Code Review",
-  "description": "AI code review of uncommitted changes or GitHub pull requests using your own self-hosted LLM (vLLM, Ollama, LM Studio, llama.cpp, or any OpenAI-compatible server). Can post findings as a real GitHub PR review.",
+  "name": "diff-leppard",
+  "displayName": "Diff Leppard",
+  "description": "Diff Leppard: AI code review of uncommitted changes or GitHub pull requests using your own self-hosted LLM (vLLM, Ollama, LM Studio, llama.cpp, or any OpenAI-compatible server). VS Code extension, CLI, gh extension and GitHub Action.",
   "version": "0.1.0",
-  "publisher": "local",
+  "publisher": "georgestephanis",
   "private": true,
   "repository": {
     "type": "git",
-    "url": "https://github.com/georgestephanis/local-code-review-vscode.git"
+    "url": "https://github.com/georgestephanis/diff-leppard.git"
   },
   "bugs": {
-    "url": "https://github.com/georgestephanis/local-code-review-vscode/issues"
+    "url": "https://github.com/georgestephanis/diff-leppard/issues"
   },
   "engines": {
     "vscode": "^1.90.0",
@@ -25,16 +25,17 @@
     "vllm",
     "ollama",
     "llm",
-    "pull request"
+    "pull request",
+    "diff-leppard"
   ],
   "main": "./out/src/extension.js",
   "bin": {
-    "local-code-review": "bin/local-code-review.js"
+    "diff-leppard": "bin/diff-leppard.js"
   },
   "files": [
     "bin/",
     "out/src/**/*.js",
-    "gh-local-review/",
+    "gh-diff-leppard/",
     "AGENTS.md"
   ],
   "activationEvents": [
@@ -43,76 +44,76 @@
   "contributes": {
     "commands": [
       {
-        "command": "localCodeReview.reviewUncommitted",
+        "command": "diffLeppard.reviewUncommitted",
         "title": "Review Uncommitted Changes",
-        "category": "Local Code Review",
+        "category": "Diff Leppard",
         "icon": "$(checklist)"
       },
       {
-        "command": "localCodeReview.reviewStaged",
+        "command": "diffLeppard.reviewStaged",
         "title": "Review Staged Changes",
-        "category": "Local Code Review"
+        "category": "Diff Leppard"
       },
       {
-        "command": "localCodeReview.reviewPullRequest",
+        "command": "diffLeppard.reviewPullRequest",
         "title": "Review GitHub Pull Request\u2026",
-        "category": "Local Code Review",
+        "category": "Diff Leppard",
         "icon": "$(git-pull-request)"
       },
       {
-        "command": "localCodeReview.postLastReview",
+        "command": "diffLeppard.postLastReview",
         "title": "Post Last Review to GitHub",
-        "category": "Local Code Review",
-        "enablement": "localCodeReview.hasPrReview"
+        "category": "Diff Leppard",
+        "enablement": "diffLeppard.hasPrReview"
       },
       {
-        "command": "localCodeReview.openLastReport",
+        "command": "diffLeppard.openLastReport",
         "title": "Open Last Review Report",
-        "category": "Local Code Review",
-        "enablement": "localCodeReview.hasReview"
+        "category": "Diff Leppard",
+        "enablement": "diffLeppard.hasReview"
       },
       {
-        "command": "localCodeReview.selectModel",
+        "command": "diffLeppard.selectModel",
         "title": "Select Model",
-        "category": "Local Code Review"
+        "category": "Diff Leppard"
       },
       {
-        "command": "localCodeReview.testConnection",
+        "command": "diffLeppard.testConnection",
         "title": "Test LLM Connection",
-        "category": "Local Code Review"
+        "category": "Diff Leppard"
       },
       {
-        "command": "localCodeReview.setApiKey",
+        "command": "diffLeppard.setApiKey",
         "title": "Set LLM API Key",
-        "category": "Local Code Review"
+        "category": "Diff Leppard"
       },
       {
-        "command": "localCodeReview.clearFindings",
+        "command": "diffLeppard.clearFindings",
         "title": "Clear Findings",
-        "category": "Local Code Review"
+        "category": "Diff Leppard"
       },
       {
-        "command": "localCodeReview.openSettings",
+        "command": "diffLeppard.openSettings",
         "title": "Open Settings",
-        "category": "Local Code Review"
+        "category": "Diff Leppard"
       },
       {
-        "command": "localCodeReview.showMenu",
+        "command": "diffLeppard.showMenu",
         "title": "Show Menu",
-        "category": "Local Code Review"
+        "category": "Diff Leppard"
       }
     ],
     "menus": {
       "scm/title": [
         {
-          "command": "localCodeReview.reviewUncommitted",
+          "command": "diffLeppard.reviewUncommitted",
           "when": "scmProvider == git",
           "group": "navigation@99"
         }
       ],
       "commandPalette": [
         {
-          "command": "localCodeReview.showMenu",
+          "command": "diffLeppard.showMenu",
           "when": "false"
         }
       ]
@@ -121,7 +122,7 @@
       {
         "title": "LLM Server",
         "properties": {
-          "localCodeReview.provider": {
+          "diffLeppard.provider": {
             "type": "string",
             "enum": [
               "openai",
@@ -135,19 +136,19 @@
             "order": 0,
             "description": "Which API style to use when talking to your model server."
           },
-          "localCodeReview.baseUrl": {
+          "diffLeppard.baseUrl": {
             "type": "string",
             "default": "http://localhost:8000/v1",
             "order": 1,
             "markdownDescription": "Base URL of the model server.\n\n- vLLM: `http://host:8000/v1`\n- Ollama (openai provider): `http://host:11434/v1`\n- Ollama (ollama provider): `http://host:11434`\n- LM Studio: `http://host:1234/v1`\n- llama.cpp: `http://host:8080/v1`"
           },
-          "localCodeReview.model": {
+          "diffLeppard.model": {
             "type": "string",
             "default": "",
             "order": 2,
-            "markdownDescription": "Model name as the server knows it (e.g. `Qwen/Qwen2.5-Coder-32B-Instruct` or `qwen2.5-coder:14b`). Leave empty to pick from the server's model list. Use **Local Code Review: Select Model** to choose one."
+            "markdownDescription": "Model name as the server knows it (e.g. `Qwen/Qwen2.5-Coder-32B-Instruct` or `qwen2.5-coder:14b`). Leave empty to pick from the server's model list. Use **Diff Leppard: Select Model** to choose one."
           },
-          "localCodeReview.temperature": {
+          "diffLeppard.temperature": {
             "type": "number",
             "default": 0.1,
             "minimum": 0,
@@ -155,14 +156,14 @@
             "order": 3,
             "description": "Sampling temperature. Low values give more consistent reviews."
           },
-          "localCodeReview.maxOutputTokens": {
+          "diffLeppard.maxOutputTokens": {
             "type": "integer",
             "default": 4096,
             "minimum": 256,
             "order": 4,
             "description": "Maximum tokens the model may generate per request (max_tokens / num_predict)."
           },
-          "localCodeReview.jsonMode": {
+          "diffLeppard.jsonMode": {
             "type": "string",
             "enum": [
               "json_object",
@@ -178,20 +179,20 @@
             "order": 5,
             "description": "How to ask the server for structured JSON output. If the server rejects it, the extension falls back to 'none' automatically."
           },
-          "localCodeReview.stream": {
+          "diffLeppard.stream": {
             "type": "boolean",
             "default": true,
             "order": 6,
             "description": "Stream responses. Recommended: avoids Node's 5-minute header timeout on slow models and shows progress."
           },
-          "localCodeReview.requestTimeoutSeconds": {
+          "diffLeppard.requestTimeoutSeconds": {
             "type": "integer",
             "default": 900,
             "minimum": 10,
             "order": 7,
             "description": "Abort a single model request after this many seconds."
           },
-          "localCodeReview.concurrency": {
+          "diffLeppard.concurrency": {
             "type": "integer",
             "default": 1,
             "minimum": 1,
@@ -199,23 +200,23 @@
             "order": 8,
             "description": "How many diff chunks to send to the server at once. vLLM batches well, so 2-4 is fine there; keep 1 for Ollama on a single GPU."
           },
-          "localCodeReview.ollamaNumCtx": {
+          "diffLeppard.ollamaNumCtx": {
             "type": "integer",
             "default": 16384,
             "minimum": 2048,
             "order": 9,
             "description": "Context window (num_ctx) to request when provider is 'ollama'. Ollama's default is small and silently truncates prompts."
           },
-          "localCodeReview.extraHeaders": {
+          "diffLeppard.extraHeaders": {
             "type": "object",
             "default": {},
             "additionalProperties": {
               "type": "string"
             },
             "order": 10,
-            "description": "Extra HTTP headers to send to the model server (e.g. for a reverse proxy). The API key itself is stored securely via 'Local Code Review: Set LLM API Key'."
+            "description": "Extra HTTP headers to send to the model server (e.g. for a reverse proxy). The API key itself is stored securely via 'Diff Leppard: Set LLM API Key'."
           },
-          "localCodeReview.extraBody": {
+          "diffLeppard.extraBody": {
             "type": "object",
             "default": {},
             "order": 11,
@@ -226,14 +227,14 @@
       {
         "title": "Review",
         "properties": {
-          "localCodeReview.maxChunkChars": {
+          "diffLeppard.maxChunkChars": {
             "type": "integer",
             "default": 24000,
             "minimum": 2000,
             "order": 20,
             "markdownDescription": "Diffs are split into chunks of at most this many characters per request (roughly 3.5 chars per token). Size it to your model's context window minus `maxOutputTokens` and ~1k tokens of prompt: e.g. 24000 for a 16k-context model, 90000 for 32k."
           },
-          "localCodeReview.contextLines": {
+          "diffLeppard.contextLines": {
             "type": "integer",
             "default": 5,
             "minimum": 0,
@@ -241,13 +242,13 @@
             "order": 21,
             "description": "Lines of unchanged context around each change in local diffs (git diff -U)."
           },
-          "localCodeReview.includeUntracked": {
+          "diffLeppard.includeUntracked": {
             "type": "boolean",
             "default": true,
             "order": 22,
             "description": "Include new, untracked (but not ignored) files when reviewing uncommitted changes."
           },
-          "localCodeReview.minimumSeverity": {
+          "diffLeppard.minimumSeverity": {
             "type": "string",
             "enum": [
               "critical",
@@ -259,7 +260,7 @@
             "order": 23,
             "description": "Drop findings below this severity."
           },
-          "localCodeReview.excludeGlobs": {
+          "diffLeppard.excludeGlobs": {
             "type": "array",
             "items": {
               "type": "string"
@@ -285,20 +286,20 @@
             "order": 24,
             "description": "Files matching these globs are not sent to the model. Patterns without a '/' match the file name in any directory."
           },
-          "localCodeReview.extraInstructions": {
+          "diffLeppard.extraInstructions": {
             "type": "string",
             "default": "",
             "editPresentation": "multilineText",
             "order": 25,
             "description": "Extra instructions appended to the review prompt (e.g. 'This is a WordPress plugin; flag missing escaping and nonce checks')."
           },
-          "localCodeReview.instructionsFile": {
+          "diffLeppard.instructionsFile": {
             "type": "string",
             "default": ".github/code-review-instructions.md",
             "order": 26,
             "description": "Repo-relative path of a file with project-specific review guidelines. Read from the working tree for local reviews and from the PR's base branch for PR reviews. Leave empty to disable."
           },
-          "localCodeReview.showStatusBar": {
+          "diffLeppard.showStatusBar": {
             "type": "boolean",
             "default": true,
             "order": 27,
@@ -309,13 +310,13 @@
       {
         "title": "GitHub",
         "properties": {
-          "localCodeReview.github.apiUrl": {
+          "diffLeppard.github.apiUrl": {
             "type": "string",
             "default": "https://api.github.com",
             "order": 40,
             "markdownDescription": "GitHub REST API URL. For GitHub Enterprise Server use `https://your-host/api/v3` (and set `github-enterprise.uri` so VS Code can sign you in)."
           },
-          "localCodeReview.github.auth": {
+          "diffLeppard.github.auth": {
             "type": "string",
             "enum": [
               "vscode",
@@ -329,7 +330,7 @@
             "order": 41,
             "description": "Where to get a GitHub token from."
           },
-          "localCodeReview.github.postReview": {
+          "diffLeppard.github.postReview": {
             "type": "string",
             "enum": [
               "ask",
@@ -345,7 +346,7 @@
             "order": 42,
             "description": "Whether to post PR review findings back to GitHub."
           },
-          "localCodeReview.github.reviewEvent": {
+          "diffLeppard.github.reviewEvent": {
             "type": "string",
             "enum": [
               "COMMENT",
@@ -361,7 +362,7 @@
             "order": 43,
             "description": "Review type used when posting automatically or via 'Post review'."
           },
-          "localCodeReview.github.suggestionBlocks": {
+          "diffLeppard.github.suggestionBlocks": {
             "type": "boolean",
             "default": false,
             "order": 44,
@@ -375,7 +376,7 @@
     "compile": "tsc -p .",
     "watch": "tsc -watch -p .",
     "test": "npm run compile && node --test out/test/*.test.js",
-    "package": "npm run compile && vsce package --skip-license --out local-code-review.vsix",
+    "package": "npm run compile && vsce package --skip-license --out diff-leppard.vsix",
     "test:vscode": "npm run compile && node out/test/vscode/run.js",
     "prepare": "tsc -p .",
     "cli": "node out/src/cli.js"

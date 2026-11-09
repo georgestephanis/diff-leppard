@@ -34,7 +34,7 @@ jobs:
         with:
           base-url: http://127.0.0.1:8765/v1
           pr-number: "1"
-          repository: georgestephanis/local-code-review-vscode
+          repository: georgestephanis/diff-leppard
           review-event: none
       - name: Check outputs
         run: |

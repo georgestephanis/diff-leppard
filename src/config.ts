@@ -1,5 +1,5 @@
 /**
- * Configuration for the CLI. Keys mirror the VS Code settings (without the `localCodeReview.` prefix),
+ * Configuration for the CLI. Keys mirror the VS Code settings (without the `diffLeppard.` prefix),
  * so a config file looks like:
  *
  *   { "baseUrl": "http://gpu-box:8000/v1", "model": "qwen2.5-coder:32b", "apiKey": "…",
@@ -88,12 +88,12 @@ export function defaultSettings(): CliSettings {
   };
 }
 
-export const REPO_CONFIG_FILE = '.local-code-review.json';
+export const REPO_CONFIG_FILE = '.diff-leppard.json';
 
 export function userConfigPath(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.LCR_CONFIG) return env.LCR_CONFIG;
+  if (env.DIFF_LEPPARD_CONFIG) return env.DIFF_LEPPARD_CONFIG;
   const base = env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-  return path.join(base, 'local-code-review', 'config.json');
+  return path.join(base, 'diff-leppard', 'config.json');
 }
 
 type Json = Record<string, unknown>;
@@ -102,12 +102,12 @@ function isObj(v: unknown): v is Json {
   return !!v && typeof v === 'object' && !Array.isArray(v);
 }
 
-/** Deep-merge plain objects; arrays and scalars replace. Accepts `localCodeReview.`-prefixed keys too. */
+/** Deep-merge plain objects; arrays and scalars replace. Accepts `diffLeppard.`-prefixed keys too. */
 export function merge<T extends Json>(base: T, over: Json): T {
   const out: Json = { ...base };
   for (let [k, v] of Object.entries(over)) {
     if (v === undefined) continue;
-    k = k.replace(/^localCodeReview\./, '');
+    k = k.replace(/^diffLeppard\./, '');
     if (k.startsWith('github.')) {
       out.github = merge((out.github as Json) ?? {}, { [k.slice(7)]: v });
       continue;
@@ -139,17 +139,17 @@ function envSettings(env: NodeJS.ProcessEnv): Json {
   const o: Json = {};
   if (env.GH_HOST && env.GH_HOST !== 'github.com') o['github.apiUrl'] = `https://${env.GH_HOST}/api/v3`;
   const str = (k: string, name: string) => env[name] !== undefined && env[name] !== '' && (o[k] = env[name]);
-  str('provider', 'LCR_PROVIDER');
-  str('baseUrl', 'LCR_BASE_URL');
-  str('model', 'LCR_MODEL');
-  str('apiKey', 'LCR_API_KEY');
-  str('minimumSeverity', 'LCR_MIN_SEVERITY');
-  if (env.LCR_MAX_CHUNK_CHARS) o.maxChunkChars = Number(env.LCR_MAX_CHUNK_CHARS);
-  if (env.LCR_CONCURRENCY) o.concurrency = Number(env.LCR_CONCURRENCY);
-  str('jsonMode', 'LCR_JSON_MODE');
-  str('extraInstructions', 'LCR_EXTRA_INSTRUCTIONS');
-  if (env.LCR_MAX_OUTPUT_TOKENS) o.maxOutputTokens = Number(env.LCR_MAX_OUTPUT_TOKENS);
-  if (env.LCR_TIMEOUT_SECONDS) o.requestTimeoutSeconds = Number(env.LCR_TIMEOUT_SECONDS);
+  str('provider', 'DIFF_LEPPARD_PROVIDER');
+  str('baseUrl', 'DIFF_LEPPARD_BASE_URL');
+  str('model', 'DIFF_LEPPARD_MODEL');
+  str('apiKey', 'DIFF_LEPPARD_API_KEY');
+  str('minimumSeverity', 'DIFF_LEPPARD_MIN_SEVERITY');
+  if (env.DIFF_LEPPARD_MAX_CHUNK_CHARS) o.maxChunkChars = Number(env.DIFF_LEPPARD_MAX_CHUNK_CHARS);
+  if (env.DIFF_LEPPARD_CONCURRENCY) o.concurrency = Number(env.DIFF_LEPPARD_CONCURRENCY);
+  str('jsonMode', 'DIFF_LEPPARD_JSON_MODE');
+  str('extraInstructions', 'DIFF_LEPPARD_EXTRA_INSTRUCTIONS');
+  if (env.DIFF_LEPPARD_MAX_OUTPUT_TOKENS) o.maxOutputTokens = Number(env.DIFF_LEPPARD_MAX_OUTPUT_TOKENS);
+  if (env.DIFF_LEPPARD_TIMEOUT_SECONDS) o.requestTimeoutSeconds = Number(env.DIFF_LEPPARD_TIMEOUT_SECONDS);
   const json = (name: string) => {
     try {
       return JSON.parse(env[name]!);
@@ -157,9 +157,9 @@ function envSettings(env: NodeJS.ProcessEnv): Json {
       throw new Error(`${name} must be a JSON object`);
     }
   };
-  if (env.LCR_EXTRA_BODY) o.extraBody = json('LCR_EXTRA_BODY');
-  if (env.LCR_EXTRA_HEADERS) o.extraHeaders = json('LCR_EXTRA_HEADERS');
-  if (env.LCR_GITHUB_API_URL) o['github.apiUrl'] = env.LCR_GITHUB_API_URL;
+  if (env.DIFF_LEPPARD_EXTRA_BODY) o.extraBody = json('DIFF_LEPPARD_EXTRA_BODY');
+  if (env.DIFF_LEPPARD_EXTRA_HEADERS) o.extraHeaders = json('DIFF_LEPPARD_EXTRA_HEADERS');
+  if (env.DIFF_LEPPARD_GITHUB_API_URL) o['github.apiUrl'] = env.DIFF_LEPPARD_GITHUB_API_URL;
   return o;
 }
 
@@ -181,7 +181,7 @@ export async function loadConfig(repoRoot: string | undefined, flags: Json, env 
     const repoFile = path.join(repoRoot, REPO_CONFIG_FILE);
     const repo = await readJson(repoFile);
     if (repo) {
-      if ('apiKey' in repo) throw new Error(`${repoFile} must not contain apiKey; put it in ${userFile} or LCR_API_KEY.`);
+      if ('apiKey' in repo) throw new Error(`${repoFile} must not contain apiKey; put it in ${userFile} or DIFF_LEPPARD_API_KEY.`);
       settings = merge(settings, repo);
       sources.push(repoFile);
     }

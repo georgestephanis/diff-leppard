@@ -89,7 +89,7 @@ export class LlmClient {
       if (res.status === 404 && this.cfg.provider === 'openai' && !/\/v\d+$/.test(this.base())) {
         msg += ' (OpenAI-compatible servers usually need the base URL to end in /v1)';
       }
-      if (res.status === 401 || res.status === 403) msg += ' (check the API key: "Local Code Review: Set LLM API Key")';
+      if (res.status === 401 || res.status === 403) msg += ' (check the API key: "Diff Leppard: Set LLM API Key")';
       throw new LlmError(msg, res.status, body);
     }
     return res;
@@ -102,7 +102,7 @@ export class LlmClient {
       return new LlmError(`Request to ${url} timed out after ${Math.round(this.cfg.timeoutMs / 1000)}s`);
     }
     const cause = err.cause?.code ?? err.cause?.message ?? err.message;
-    return new LlmError(`Could not reach ${url} (${cause}). Is the server running and is localCodeReview.baseUrl correct?`);
+    return new LlmError(`Could not reach ${url} (${cause}). Is the server running and is diffLeppard.baseUrl correct?`);
   }
 
   async listModels(signal?: AbortSignal): Promise<string[]> {
@@ -267,7 +267,7 @@ async function readLines(res: Response, onLine: (line: string) => void): Promise
       chunk = await reader.read();
     } catch (e) {
       const name = (e as Error).name;
-      if (name === 'TimeoutError') throw new LlmError('Model request timed out while streaming (raise localCodeReview.requestTimeoutSeconds)');
+      if (name === 'TimeoutError') throw new LlmError('Model request timed out while streaming (raise diffLeppard.requestTimeoutSeconds)');
       if (name === 'AbortError') throw new LlmError('Cancelled');
       throw new LlmError(`Stream from model server failed: ${(e as Error).message}`);
     }

@@ -69,7 +69,7 @@ export async function getLocalDiff(root: string, opts: LocalDiffOptions): Promis
     const out = await git(root, ['ls-files', '--others', '--exclude-standard', '-z']);
     for (const rel of out.split('\0').filter(Boolean)) {
       if (opts.exclude(rel)) {
-        skipped.push({ path: rel, reason: 'excluded by localCodeReview.excludeGlobs' });
+        skipped.push({ path: rel, reason: 'excluded by diffLeppard.excludeGlobs' });
         continue;
       }
       const abs = path.join(root, rel);

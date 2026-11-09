@@ -10,7 +10,7 @@ import * as path from 'path';
 import { runTests } from '@vscode/test-electron';
 
 async function main() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lcr-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'diff-leppard-'));
   const repo = path.join(tmp, 'repo');
   fs.mkdirSync(repo);
   const git = (...a: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { cwd: repo });

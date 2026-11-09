@@ -9,7 +9,7 @@ import { renderTerminal } from '../src/format';
 
 test('merge handles prefixed and github.* keys, replaces extraBody wholesale', () => {
   const m = merge({ a: 1, extraBody: { x: 1 }, github: { apiUrl: 'u', reviewEvent: 'COMMENT' } } as Record<string, unknown>, {
-    'localCodeReview.model': 'm',
+    'diffLeppard.model': 'm',
     'github.reviewEvent': 'PENDING',
     extraBody: { y: 2 },
   });
@@ -17,11 +17,11 @@ test('merge handles prefixed and github.* keys, replaces extraBody wholesale', (
 });
 
 test('loadConfig precedence: user file < repo file < env < flags', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'lcr-cfg-'));
+  const dir = mkdtempSync(path.join(tmpdir(), 'diff-leppard-cfg-'));
   const user = path.join(dir, 'user.json');
   writeFileSync(user, '{\n // comment\n "baseUrl": "http://user/v1", "model": "user-model", "apiKey": "k", "concurrency": 3,\n}');
-  writeFileSync(path.join(dir, '.local-code-review.json'), '{"model": "repo-model", "minimumSeverity": "nit"}');
-  const { settings, sources } = await loadConfig(dir, { concurrency: 5 }, { LCR_CONFIG: user, LCR_BASE_URL: 'http://env/v1', LCR_EXTRA_HEADERS: '{"X":"1"}' });
+  writeFileSync(path.join(dir, '.diff-leppard.json'), '{"model": "repo-model", "minimumSeverity": "nit"}');
+  const { settings, sources } = await loadConfig(dir, { concurrency: 5 }, { DIFF_LEPPARD_CONFIG: user, DIFF_LEPPARD_BASE_URL: 'http://env/v1', DIFF_LEPPARD_EXTRA_HEADERS: '{"X":"1"}' });
   assert.equal(sources.length, 2);
   assert.equal(settings.baseUrl, 'http://env/v1');
   assert.equal(settings.model, 'repo-model');
@@ -30,8 +30,8 @@ test('loadConfig precedence: user file < repo file < env < flags', async () => {
   assert.equal(settings.concurrency, 5);
   assert.deepEqual(settings.extraHeaders, { X: '1' });
 
-  writeFileSync(path.join(dir, '.local-code-review.json'), '{"apiKey": "leak"}');
-  await assert.rejects(loadConfig(dir, {}, { LCR_CONFIG: user }), /must not contain apiKey/);
+  writeFileSync(path.join(dir, '.diff-leppard.json'), '{"apiKey": "leak"}');
+  await assert.rejects(loadConfig(dir, {}, { DIFF_LEPPARD_CONFIG: user }), /must not contain apiKey/);
 });
 
 test('renderTerminal without color', () => {
@@ -54,7 +54,7 @@ test('renderTerminal without color', () => {
 });
 
 test('CLI reviews local changes against a mock server and honours --fail-on', async () => {
-  const repo = mkdtempSync(path.join(tmpdir(), 'lcr-cli-'));
+  const repo = mkdtempSync(path.join(tmpdir(), 'diff-leppard-cli-'));
   const git = (...a: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { cwd: repo });
   git('init', '-q');
   writeFileSync(path.join(repo, 'a.js'), 'x\n');
@@ -66,7 +66,7 @@ test('CLI reviews local changes against a mock server and honours --fail-on', as
   await new Promise((r) => server.stdout.once('data', r));
   try {
     const cli = path.join(__dirname, '../src/cli.js');
-    const env = { ...process.env, LCR_CONFIG: '/nonexistent', LCR_BASE_URL: 'http://127.0.0.1:8766/v1' };
+    const env = { ...process.env, DIFF_LEPPARD_CONFIG: '/nonexistent', DIFF_LEPPARD_BASE_URL: 'http://127.0.0.1:8766/v1' };
     const run = (args: string[]) =>
       new Promise<{ code: number; out: string }>((resolve) => {
         const p = spawn(process.execPath, [cli, ...args], { cwd: repo, env });

@@ -1,4 +1,4 @@
-# Copy to .github/workflows/local-code-review.yml in your repository.
+# Copy to .github/workflows/diff-leppard.yml in your repository.
 #
 # Reviews pull requests with YOUR model server (any OpenAI-compatible host: vLLM, Ollama, LM Studio,
 # llama.cpp, SGLang, LocalAI, a hosted provider…) and posts the result as a PR review.
@@ -17,8 +17,8 @@
 # Triggers:
 #   - automatically when a PR is opened / reopened / marked ready for review
 #   - on demand: a maintainer comments "/review" on a PR
-#   - manually: Actions → Local Code Review → Run workflow, with a PR number
-name: Local Code Review
+#   - manually: Actions → Diff Leppard → Run workflow, with a PR number
+name: Diff Leppard
 
 on:
   pull_request:
@@ -36,7 +36,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: local-code-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+  group: diff-leppard-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
   cancel-in-progress: true
 
 jobs:
@@ -66,7 +66,7 @@ jobs:
       #     oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
       #     tags: tag:ci
 
-      - uses: georgestephanis/local-code-review-vscode@main
+      - uses: georgestephanis/diff-leppard@main
         with:
           base-url: ${{ secrets.LLM_BASE_URL || vars.LLM_BASE_URL }}
           model: ${{ vars.LLM_MODEL }}

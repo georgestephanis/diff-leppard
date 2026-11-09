@@ -35,7 +35,7 @@ export function selectFiles(
   for (const f of files) {
     if (f.binary) skipped.push({ path: f.path, reason: 'binary' });
     else if (f.status === 'deleted') skipped.push({ path: f.path, reason: 'deleted' });
-    else if (exclude(f.path)) skipped.push({ path: f.path, reason: 'excluded by localCodeReview.excludeGlobs' });
+    else if (exclude(f.path)) skipped.push({ path: f.path, reason: 'excluded by diffLeppard.excludeGlobs' });
     else if (!f.hunks.some((h) => h.lines.some((l) => l.kind === 'add'))) {
       skipped.push({ path: f.path, reason: f.status === 'renamed' ? 'pure rename' : 'no added lines' });
     } else included.push(f);
