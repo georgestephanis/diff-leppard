@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Runaway replies are stopped early.** Models sometimes get stuck emitting the same thing over and over: a run of whitespace in JSON mode, or the same finding again and again. Diff Leppard used to wait for `maxOutputTokens`, which kept the GPU busy for minutes (one real case: 9 minutes at 15 tokens/s, for a 400-token review). It now spots the loop as it streams, hangs up so the server stops generating, keeps one copy of what was repeated, and salvages the findings. If nothing parses, it asks once more and tells the model it was repeating itself. Loops in a reasoning stream are caught too. This needs `stream: true`, which is the default.
+
 ## 1.1.0 (2026-11-09)
 
 - **pre-commit hooks:** `diff-leppard` (installs itself) and `diff-leppard-system` (uses the CLI on PATH). They review staged changes at pre-commit and the pushed commits at pre-push.

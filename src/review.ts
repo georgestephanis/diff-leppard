@@ -148,16 +148,20 @@ async function reviewChunk(
   opts.log.debug(`--- prompt part ${index + 1}/${count} (${messages.map((m) => m.content.length).reduce((a, b) => a + b)} chars) ---`);
   let res = await opts.llm.chat(messages, { signal: opts.signal, schema: REVIEW_JSON_SCHEMA, onProgress: onChars });
   opts.log.debug(`--- raw model output part ${index + 1} ---\n${res.content}`);
-  if (res.truncated) opts.log.warn(`Part ${index + 1}: output hit maxOutputTokens and was cut off; salvaging what parsed.`);
+  if (res.runaway) opts.log.warn(`Part ${index + 1}: the model started repeating itself and was stopped; salvaging what parsed.`);
+  else if (res.truncated) opts.log.warn(`Part ${index + 1}: output hit maxOutputTokens and was cut off; salvaging what parsed.`);
 
   let parsed = parseModelOutput(res.content);
   if (!parsed.ok) {
     opts.log.warn(`Part ${index + 1}: could not parse model output as JSON, asking once more.`);
+    const nudge = res.runaway
+      ? 'You started repeating the same text over and over, so your reply was cut off. Reply again with ONLY the JSON object described in the instructions, listing each finding once.'
+      : 'That was not valid JSON. Reply again with ONLY the JSON object described in the instructions.';
     res = await opts.llm.chat(
       [
         ...messages,
         { role: 'assistant', content: res.content.slice(0, 4000) },
-        { role: 'user', content: 'That was not valid JSON. Reply again with ONLY the JSON object described in the instructions.' },
+        { role: 'user', content: nudge },
       ],
       { signal: opts.signal, schema: REVIEW_JSON_SCHEMA, onProgress: onChars },
     );

@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MAX_AUTO_CHUNK_CHARS = exports.FALLBACK_CHUNK_CHARS = exports.LlmClient = exports.LlmError = void 0;
+exports.findRepetitionLoop = findRepetitionLoop;
 exports.healthCheck = healthCheck;
 exports.resolveChunkChars = resolveChunkChars;
 const types_1 = require("./types");
@@ -150,9 +151,11 @@ class LlmClient {
             return { content, truncated: choice?.finish_reason === 'length' };
         }
         let content = '';
-        let reasoning = 0;
+        let reasoning = '';
         let truncated = false;
-        await readLines(res, (line) => {
+        const guard = new LoopGuard();
+        const thinkGuard = new LoopGuard();
+        const stopped = await readUntilLoop(res, (line) => {
             if (!line.startsWith('data:'))
                 return;
             const data = line.slice(5).trim();
@@ -175,12 +178,14 @@ class LlmClient {
                 content += delta.content;
             const r = delta.reasoning_content ?? delta.reasoning;
             if (r)
-                reasoning += r.length;
+                reasoning += r;
             if (choice.finish_reason === 'length')
                 truncated = true;
-            opts.onProgress?.(content.length + reasoning);
+            opts.onProgress?.(content.length + reasoning.length);
+            if (guard.check(content) || thinkGuard.check(reasoning))
+                throw STOP_STREAM;
         });
-        return { content, truncated };
+        return this.finish(content, truncated, stopped, guard);
     }
     async chatOllama(messages, mode, opts) {
         const extra = { ...(this.cfg.extraBody ?? {}) };
@@ -212,9 +217,11 @@ class LlmClient {
             return { content, truncated: json.done_reason === 'length' };
         }
         let content = '';
-        let thinking = 0;
+        let thinking = '';
         let truncated = false;
-        await readLines(res, (line) => {
+        const guard = new LoopGuard();
+        const thinkGuard = new LoopGuard();
+        const stopped = await readUntilLoop(res, (line) => {
             if (!line.trim())
                 return;
             let evt;
@@ -229,15 +236,80 @@ class LlmClient {
             if (evt.message?.content)
                 content += evt.message.content;
             if (evt.message?.thinking)
-                thinking += evt.message.thinking.length;
+                thinking += evt.message.thinking;
             if (evt.done && evt.done_reason === 'length')
                 truncated = true;
-            opts.onProgress?.(content.length + thinking);
+            opts.onProgress?.(content.length + thinking.length);
+            if (guard.check(content) || thinkGuard.check(thinking))
+                throw STOP_STREAM;
         });
-        return { content, truncated };
+        return this.finish(content, truncated, stopped, guard);
+    }
+    /** Build the ChatResult, trimming a runaway reply back to one copy of whatever it was repeating. */
+    finish(content, truncated, stopped, guard) {
+        if (!stopped)
+            return { content, truncated };
+        const where = guard.loopAt === undefined ? 'its reasoning' : `its reply after ${guard.loopAt} characters`;
+        this.log.warn(`The model got stuck repeating itself in ${where}; stopped it early instead of waiting for maxOutputTokens.`);
+        if (guard.loopAt !== undefined)
+            content = content.slice(0, guard.loopAt);
+        return { content, truncated: true, runaway: true };
     }
 }
 exports.LlmClient = LlmClient;
+/** Thrown from a line handler to stop reading a stream (and close the connection, so the server stops generating). */
+const STOP_STREAM = Symbol('stop-stream');
+/** readLines, but returns true when the handler stopped the stream with STOP_STREAM. */
+async function readUntilLoop(res, onLine) {
+    try {
+        await readLines(res, onLine);
+        return false;
+    }
+    catch (e) {
+        if (e === STOP_STREAM)
+            return true;
+        throw e;
+    }
+}
+/** A loop needs at least this many repeated characters, and at least 3 more copies of the repeated span. */
+const LOOP_MIN_CHARS = 600;
+const LOOP_MIN_EXTRA_COPIES = 3;
+/** Longest repeated span we look for (a whole finding repeated over and over). */
+const LOOP_MAX_PERIOD = 2000;
+/** How often (in new characters) to look for a loop while streaming. */
+const LOOP_CHECK_EVERY = 256;
+/**
+ * If `text` ends in a degenerate loop, where the model emits the same span of 1–2000 characters over and
+ * over (a run of whitespace, "}}}}", the same finding again and again), return the index where the repeats
+ * start, which keeps exactly one copy. Otherwise undefined.
+ *
+ * It counts only the tail of the text, needs max(LOOP_MIN_CHARS, 3 × span) repeated characters, so
+ * ordinary repetition in a review (indentation, a few similar lines in a suggestion) doesn't trigger it.
+ */
+function findRepetitionLoop(text) {
+    const n = text.length;
+    for (let p = 1; p <= LOOP_MAX_PERIOD && p * (LOOP_MIN_EXTRA_COPIES + 1) <= n; p++) {
+        let i = n - 1;
+        while (i >= p && text.charCodeAt(i) === text.charCodeAt(i - p))
+            i--;
+        const repeated = n - 1 - i;
+        if (repeated >= Math.max(LOOP_MIN_CHARS, LOOP_MIN_EXTRA_COPIES * p))
+            return n - repeated;
+    }
+    return undefined;
+}
+/** Checks a growing stream for a repetition loop every LOOP_CHECK_EVERY characters. */
+class LoopGuard {
+    checkedAt = 0;
+    loopAt;
+    check(text) {
+        if (text.length - this.checkedAt < LOOP_CHECK_EVERY)
+            return false;
+        this.checkedAt = text.length;
+        this.loopAt = findRepetitionLoop(text);
+        return this.loopAt !== undefined;
+    }
+}
 async function readLines(res, onLine) {
     if (!res.body)
         return;
