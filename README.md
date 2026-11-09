@@ -15,6 +15,7 @@ It reviews **uncommitted or staged changes** or a **GitHub pull request**. It ca
 | 👀 **`diff-leppard watch`** | Automatic draft reviews for every PR that requests your review, in any repo, from your own machine | [↓](#watch-automatic-reviews-across-all-your-repos) |
 | 🪝 **pre-commit hook** | Review staged changes before commit, or pushed commits before push | [↓](#pre-commit) |
 | 🌙 **Neovim plugin** | Findings as diagnostics and in the quickfix list, from `:DiffLeppard` | [↓](#neovim) |
+| 🔌 **MCP server**: `diff-leppard mcp` | Any agent (Cursor, Copilot, Claude Desktop, Claude Code, …) asks your model for a review | [↓](#mcp-server) |
 | ✳️ **Claude Code plugin** | Claude sets up and runs Diff Leppard for you, and gets a second opinion from your model on its own work | [↓](#claude-code-plugin) |
 
 All of them share the same review engine, prompt and settings.
@@ -300,6 +301,34 @@ This repo is also a Neovim plugin (0.10+). It runs the CLI, so install that firs
 | `:DiffLeppardCancel`, `:DiffLeppardClear`, `:DiffLeppardShow` | Stop the review, clear findings, show the last ones again |
 
 Reviews run in the background. Findings show up as diagnostics (critical and major as errors, minor as warnings, nits as hints) and in the quickfix list. `:checkhealth diff-leppard` checks the CLI and the model server, and `:help diff-leppard` lists the `setup()` options (`cmd`, `args`, `minimum_severity`, …).
+
+## MCP server
+
+`diff-leppard mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so coding agents can ask **your** model for a second opinion. It uses the CLI's config, so set up the model server first.
+
+| Tool | Does |
+| --- | --- |
+| `review_local_changes` | Reviews uncommitted changes in a repo (or `staged`, `base: "main"`, `range: "a..b"`) |
+| `review_pull_request` | Reviews a GitHub PR by URL, `owner/repo#123`, or number |
+| `check_model_server` | Checks the model server answers |
+
+It is **read-only**: it never posts to GitHub. Reviews run one at a time, report progress, and can be cancelled. Results come back as the same JSON as `-f json`, and the server tells the agent to verify findings before acting on them.
+
+Register it with your agent. The command is the same everywhere (`diff-leppard mcp`, or `npx -y diff-leppard mcp`):
+
+```bash
+claude mcp add diff-leppard -- diff-leppard mcp            # Claude Code
+```
+
+```jsonc
+// Cursor (~/.cursor/mcp.json), Claude Desktop (claude_desktop_config.json), Windsurf, …
+{ "mcpServers": { "diff-leppard": { "command": "diff-leppard", "args": ["mcp"] } } }
+
+// VS Code / Copilot (.vscode/mcp.json)
+{ "servers": { "diff-leppard": { "type": "stdio", "command": "diff-leppard", "args": ["mcp"] } } }
+```
+
+CLI flags work too, e.g. `"args": ["mcp", "--model", "qwen2.5-coder:32b"]`. Run with `-v` to log requests to stderr. For Claude Code, the [plugin](#claude-code-plugin) is the lighter option: its skill drives the CLI directly.
 
 ## Claude Code plugin
 

@@ -9,18 +9,17 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as readline from 'readline/promises';
 import { parseArgs } from 'util';
-import { CliSettings, loadConfig, parseJsonc, readRepoConfig, REPO_CONFIG_FILE, REPO_CONFIG_KEYS, RepoConfigInput, userConfigPath } from './config';
-import { makeExcluder } from './diff';
+import { loadConfig, readRepoConfig, REPO_CONFIG_FILE, REPO_CONFIG_KEYS, RepoConfigInput, userConfigPath } from './config';
 import { renderTerminal } from './format';
 import { toRdjson, toSarif } from './formats';
-import { ghExec, githubRemotes, githubTokenFor } from './gh';
-import { getLocalDiff, getRepoRoot, git as gitText, readRepoFile } from './git';
+import { ghExec, githubTokenFor } from './gh';
+import { getRepoRoot } from './git';
 import { GitHubClient, parsePrReference, postReview, PullRequestInfo, RepoRef, ReviewEventSetting, webHostFromApiUrl } from './github';
-import { healthCheck, LlmClient, LlmConfig, LlmError, resolveChunkChars } from './llm';
-import { llmBase, makeLlm, reviewPullRequest } from './flow';
+import { healthCheck, LlmClient, LlmError } from './llm';
+import { defaultRepo, llmBase, makeLlm, reviewLocalChanges, ReviewInputError, reviewPullRequest } from './flow';
+import { serveMcp } from './mcp';
 import { acquireLock, defaultStateFile, parseInterval, watchOnce } from './watch';
-import { renderMarkdownReport } from './report';
-import { CancelledError, runReview } from './review';
+import { CancelledError } from './review';
 import { Logger, ReviewResult, Severity, SEVERITIES, severityRank } from './types';
 
 const HELP = `diff-leppard — AI code review with your own LLM server (vLLM, Ollama, LM Studio, llama.cpp, …)
@@ -36,6 +35,8 @@ Usage:
   diff-leppard watch [--once] [--dry-run] [--interval 5m]
       Review open PRs that request your review, in every repo you can access, once per head commit,
       leaving a pending (draft) review for you to edit and submit. Configure with "watch" in your config.
+  diff-leppard mcp             Run as an MCP server over stdio (tools: review_local_changes, review_pull_request,
+                               check_model_server). Read-only: it never posts to GitHub.
   diff-leppard models          List models on the configured server
   diff-leppard test            Check the server connection with a tiny request
   diff-leppard config          Show the effective configuration and where it came from
@@ -118,17 +119,6 @@ function packageVersion(): string {
 const isTTY = (s: NodeJS.WriteStream) => !!s.isTTY && process.env.TERM !== 'dumb';
 /** Whether to use ANSI colors (https://no-color.org: NO_COLOR disables color only). */
 const useColor = (s: NodeJS.WriteStream) => isTTY(s) && !process.env.NO_COLOR;
-
-async function defaultRepo(cwd: string, root: string | undefined, host: string): Promise<RepoRef | undefined> {
-  try {
-    const nwo = await ghExec(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], cwd);
-    const m = /^([^/]+)\/([^/]+)$/.exec(nwo);
-    if (m) return { owner: m[1], repo: m[2] };
-  } catch {
-    /* no gh, or not a GitHub repo for gh */
-  }
-  return (await githubRemotes(root, host))[0]?.repo;
-}
 
 function makeLogger(verbose: boolean, quiet: boolean, progress: Progress): Logger {
   const debug = !!process.env.DIFF_LEPPARD_DEBUG;
@@ -238,7 +228,7 @@ export async function main(argv: string[]): Promise<number> {
 
   let command = positionals[0] ?? 'pr';
   let rest = positionals.slice(1);
-  if (!['pr', 'local', 'staged', 'hook', 'watch', 'models', 'test', 'config', 'help'].includes(command)) {
+  if (!['pr', 'local', 'staged', 'hook', 'watch', 'mcp', 'models', 'test', 'config', 'help'].includes(command)) {
     // `diff-leppard 123` / `gh diff-leppard https://…` → pr
     command = 'pr';
     rest = positionals;
@@ -301,13 +291,19 @@ export async function main(argv: string[]): Promise<number> {
     return loaded;
   };
   // PR reviews take repo config from the PR's base branch (below); local reviews from the working tree.
-  const isPr = !['local', 'watch', 'models', 'test', 'config'].includes(command);
+  const isPr = !['local', 'watch', 'mcp', 'models', 'test', 'config'].includes(command);
   let { settings: s, sources, warnings } = await configure(isPr ? undefined : await readRepoConfig(root));
 
-  const progress = new Progress(!o.quiet, isTTY(process.stderr));
+  // MCP: stdout is the protocol, so no spinner. Warnings (and -v info) still go to stderr, which clients log.
+  const progress = new Progress(!o.quiet && command !== 'mcp', isTTY(process.stderr));
   const log = makeLogger(!!o.verbose, !!o.quiet, progress);
   for (const src of sources) log.info(`config: ${src}`);
   for (const w of warnings) log.warn(w);
+
+  if (command === 'mcp') {
+    await serveMcp({ input: process.stdin, output: process.stdout, version: packageVersion(), cwd, configure, log });
+    return 0;
+  }
 
   if (command === 'config') {
     const redacted = JSON.parse(JSON.stringify(s));
@@ -412,16 +408,6 @@ export async function main(argv: string[]): Promise<number> {
   if (failOn && !SEVERITIES.includes(failOn)) throw new UsageError(`--fail-on must be one of ${SEVERITIES.join(', ')}`);
   const format = o.format ?? (isTTY(process.stdout) ? 'text' : 'markdown');
   if (!['text', 'markdown', 'json', 'sarif', 'rdjson'].includes(format)) throw new UsageError('--format must be text, markdown, json, sarif or rdjson');
-  const exclude = makeExcluder(s.excludeGlobs);
-  const reviewOpts = {
-    maxChunkChars: s.maxChunkChars,
-    concurrency: s.concurrency,
-    minimumSeverity: s.minimumSeverity,
-    exclude,
-    log,
-    signal: ac.signal,
-    onProgress: (m: string) => progress.update(m),
-  };
 
   let result: ReviewResult;
   let title: string;
@@ -431,56 +417,23 @@ export async function main(argv: string[]): Promise<number> {
   try {
     if (command === 'local') {
       if (!root) throw new UsageError(`${cwd} is not inside a git repository`);
-      progress.update('Collecting diff…');
-      let range: { from: string; to: string } | undefined;
-      if (o.range) {
-        const m = /^(.+?)(\.{2,3})(.+)$/.exec(o.range);
-        if (!m) throw new UsageError('--range must look like <from>..<to> (or <from>...<to> for "since the merge-base")');
-        range = { from: m[1], to: m[3] };
-        if (m[2] === '...') {
-          const mb = (await gitText(root, ['merge-base', m[1], m[3]])).trim();
-          if (!mb) throw new UsageError(`No common ancestor between ${m[1]} and ${m[3]}`);
-          range.from = mb;
-        }
-      }
-      let diff;
-      try {
-        diff = await getLocalDiff(root, {
-          stagedOnly: !!o.staged,
-          base: o.base,
-          range,
-          contextLines: s.contextLines,
-          includeUntracked: s.includeUntracked,
-          maxUntrackedBytes: 256 * 1024,
-          exclude,
-        });
-      } catch (e) {
-        throw new UsageError((e as Error).message);
-      }
-      const what = o.range
-        ? `commits ${o.range}`
-        : o.base
-          ? `changes since ${o.base}`
-          : o.staged
-            ? 'staged changes'
-            : 'uncommitted changes';
-      if (!diff.files.length) {
+      const local = await reviewLocalChanges({
+        root,
+        settings: s,
+        staged: !!o.staged,
+        base: o.base,
+        range: o.range,
+        log,
+        signal: ac.signal,
+        onProgress: (m) => progress.update(m),
+      });
+      if (!local.result) {
         progress.clear();
-        process.stderr.write(`No ${what} in ${path.basename(root)}.\n`);
+        process.stderr.write(`No ${local.what} in ${path.basename(root)}.\n`);
         return 0;
       }
-      const repoInstructions = s.instructionsFile ? await readRepoFile(root, s.instructionsFile) : undefined;
-      if (repoInstructions) log.info(`Using review guidelines from ${s.instructionsFile}`);
-      const llm = await makeLlm(s, log);
-      result = await runReview(diff.files, {
-        ...reviewOpts,
-        maxChunkChars: await resolveChunkChars(llm, reviewOpts.maxChunkChars, s.maxOutputTokens, log, ac.signal),
-        llm,
-        context: { extraInstructions: s.extraInstructions, repoInstructions },
-        preSkipped: diff.skipped,
-      });
-      title = `Review of ${what} — ${path.basename(root)}`;
-      markdown = () => renderMarkdownReport(result, { title, source: `${what[0].toUpperCase()}${what.slice(1)} in **${path.basename(root)}**` });
+      result = local.result;
+      ({ title, markdown } = local);
     } else {
       const host = webHostFromApiUrl(s.github.apiUrl);
       const arg = rest[0];
@@ -571,7 +524,7 @@ export function run(argv: string[] = process.argv.slice(2)): void {
     (code) => process.exit(code),
     (e) => {
       process.stderr.write(`${isTTY(process.stderr) ? '\r\x1b[K' : ''}error: ${(e as Error).message}\n`);
-      if (e instanceof UsageError || (e as { code?: string }).code?.startsWith?.('ERR_PARSE_ARGS')) process.stderr.write('Run with --help for usage.\n');
+      if (e instanceof UsageError || e instanceof ReviewInputError || (e as { code?: string }).code?.startsWith?.('ERR_PARSE_ARGS')) process.stderr.write('Run with --help for usage.\n');
       process.exit(e instanceof LlmError && e.message === 'Cancelled' ? 130 : 2);
     },
   );

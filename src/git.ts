@@ -67,7 +67,9 @@ export function isNullSha(ref: string | undefined): boolean {
   return !!ref && /^0+$/.test(ref);
 }
 
-async function resolveRef(root: string, ref: string): Promise<string> {
+/** Resolve a ref to a commit SHA. Refs come from users and agents (MCP), so nothing that git could read as an option. */
+export async function resolveRef(root: string, ref: string): Promise<string> {
+  if (!ref || ref.startsWith('-')) throw new Error(`Invalid git ref: ${ref}`);
   const sha = (await git(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], true)).trim();
   if (!sha) throw new Error(`Unknown git ref: ${ref}`);
   return sha;

@@ -49,6 +49,7 @@ Use `-f json` whenever you'll read the results yourself, and `-q` to drop progre
 | Everything on this branch (committed and uncommitted) | `diff-leppard local --base main -q -f json` |
 | Exactly some commits | `diff-leppard local --range origin/main..HEAD -q -f json` |
 | A GitHub PR (read-only) | `diff-leppard pr 123 --no-prompt -q -f json` (or a PR URL / `owner/repo#123`) |
+| As MCP tools (for agents without shell access) | `diff-leppard mcp` (stdio): `review_local_changes`, `review_pull_request`, `check_model_server` |
 | For other tools | `-f sarif` (code scanning, IDEs) or `-f rdjson` (reviewdog → GitLab, Bitbucket, Gitea, Gerrit) |
 
 The JSON is a `ReviewResult`:

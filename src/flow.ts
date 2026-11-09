@@ -1,6 +1,9 @@
 /** End-to-end review flows shared by the CLI's `pr` and `watch` commands (no `vscode` imports). */
 import { CliSettings, LoadedConfig, parseJsonc, REPO_CONFIG_FILE, RepoConfigInput, userConfigPath } from './config';
+import * as path from 'path';
 import { makeExcluder } from './diff';
+import { ghExec, githubRemotes } from './gh';
+import { getLocalDiff, git, readRepoFile, resolveRef } from './git';
 import { GitHubClient, PullRequestInfo, RepoRef } from './github';
 import { LlmClient, LlmConfig, resolveChunkChars } from './llm';
 import { loadPullRequest } from './pr';
@@ -111,4 +114,106 @@ export async function reviewPullRequest(p: {
       blobBaseUrl: `https://${p.host}/${p.repo.owner}/${p.repo.repo}/blob/${pr.headSha}`,
     });
   return { pr, result, settings: s, title, markdown };
+}
+
+/** A problem with what was asked for (bad ref, not a repo, …), as opposed to a failure while reviewing. */
+export class ReviewInputError extends Error {}
+
+/** The GitHub repo for a checkout: what `gh` thinks, else the first GitHub remote (upstream, then origin). */
+export async function defaultRepo(cwd: string, root: string | undefined, host: string): Promise<RepoRef | undefined> {
+  try {
+    const nwo = await ghExec(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], cwd);
+    const m = /^([^/]+)\/([^/]+)$/.exec(nwo);
+    if (m) return { owner: m[1], repo: m[2] };
+  } catch {
+    /* no gh, or not a GitHub repo for gh */
+  }
+  return (await githubRemotes(root, host))[0]?.repo;
+}
+
+export interface LocalReviewRequest {
+  /** Repo root. */
+  root: string;
+  settings: CliSettings;
+  /** At most one of these. Neither: uncommitted changes (including untracked files). */
+  staged?: boolean;
+  /** Everything since the merge-base with this ref (committed + uncommitted). */
+  base?: string;
+  /** Exactly these commits: `a..b`, or `a...b` for "since their merge-base". */
+  range?: string;
+  log: Logger;
+  signal?: AbortSignal;
+  onProgress?: (message: string) => void;
+}
+
+export interface LocalReview {
+  /** "uncommitted changes", "changes since main", … */
+  what: string;
+  /** Undefined when there was nothing to review. */
+  result?: ReviewResult;
+  title: string;
+  markdown: () => string;
+}
+
+/** Review local changes in a repo (shared by `diff-leppard local` and the MCP server). */
+export async function reviewLocalChanges(p: LocalReviewRequest): Promise<LocalReview> {
+  const s = p.settings;
+  if ([p.staged, p.base, p.range].filter(Boolean).length > 1) throw new ReviewInputError('Use only one of staged, base and range');
+  let range: { from: string; to: string } | undefined;
+  if (p.range) {
+    const m = /^(.+?)(\.{2,3})(.+)$/.exec(p.range);
+    if (!m) throw new ReviewInputError('range must look like <from>..<to> (or <from>...<to> for "since the merge-base")');
+    range = { from: m[1], to: m[3] };
+    if (m[2] === '...') {
+      let mb = '';
+      try {
+        mb = (await git(p.root, ['merge-base', await resolveRef(p.root, m[1]), await resolveRef(p.root, m[3])])).trim();
+      } catch (e) {
+        throw new ReviewInputError((e as Error).message);
+      }
+      if (!mb) throw new ReviewInputError(`No common ancestor between ${m[1]} and ${m[3]}`);
+      range.from = mb;
+    }
+  }
+  const what = p.range ? `commits ${p.range}` : p.base ? `changes since ${p.base}` : p.staged ? 'staged changes' : 'uncommitted changes';
+  const name = path.basename(p.root);
+  const title = `Review of ${what} — ${name}`;
+  p.onProgress?.('Collecting diff…');
+  const exclude = makeExcluder(s.excludeGlobs);
+  let diff;
+  try {
+    diff = await getLocalDiff(p.root, {
+      stagedOnly: !!p.staged,
+      base: p.base,
+      range,
+      contextLines: s.contextLines,
+      includeUntracked: s.includeUntracked,
+      maxUntrackedBytes: 256 * 1024,
+      exclude,
+    });
+  } catch (e) {
+    throw new ReviewInputError((e as Error).message);
+  }
+  if (!diff.files.length) return { what, title, markdown: () => `No ${what} in ${name}.\n` };
+  const repoInstructions = s.instructionsFile ? await readRepoFile(p.root, s.instructionsFile) : undefined;
+  if (repoInstructions) p.log.info(`Using review guidelines from ${s.instructionsFile}`);
+  const llm = await makeLlm(s, p.log);
+  const result = await runReview(diff.files, {
+    llm,
+    maxChunkChars: await resolveChunkChars(llm, s.maxChunkChars, s.maxOutputTokens, p.log, p.signal),
+    concurrency: s.concurrency,
+    minimumSeverity: s.minimumSeverity,
+    exclude,
+    context: { extraInstructions: s.extraInstructions, repoInstructions },
+    log: p.log,
+    signal: p.signal,
+    onProgress: p.onProgress,
+    preSkipped: diff.skipped,
+  });
+  return {
+    what,
+    result,
+    title,
+    markdown: () => renderMarkdownReport(result, { title, source: `${what[0].toUpperCase()}${what.slice(1)} in **${name}**` }),
+  };
 }
