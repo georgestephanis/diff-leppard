@@ -1,0 +1,14 @@
+.vscode/**
+src/**
+test/**
+out/test/**
+scripts/**
+**/*.map
+**/*.ts
+tsconfig.json
+conversation-log.jsonl
+node_modules/**
+.gitignore
+.vscode-test/**
+docs/**
+AGENTS.md

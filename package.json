@@ -1,0 +1,378 @@
+{
+  "name": "local-code-review",
+  "displayName": "Local Code Review",
+  "description": "AI code review of uncommitted changes or GitHub pull requests using your own self-hosted LLM (vLLM, Ollama, LM Studio, llama.cpp, or any OpenAI-compatible server). Can post findings as a real GitHub PR review.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/georgestephanis/local-code-review-vscode.git"
+  },
+  "bugs": {
+    "url": "https://github.com/georgestephanis/local-code-review-vscode/issues"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "keywords": [
+    "code review",
+    "vllm",
+    "ollama",
+    "llm",
+    "pull request"
+  ],
+  "main": "./out/src/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "localCodeReview.reviewUncommitted",
+        "title": "Review Uncommitted Changes",
+        "category": "Local Code Review",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "localCodeReview.reviewStaged",
+        "title": "Review Staged Changes",
+        "category": "Local Code Review"
+      },
+      {
+        "command": "localCodeReview.reviewPullRequest",
+        "title": "Review GitHub Pull Request\u2026",
+        "category": "Local Code Review",
+        "icon": "$(git-pull-request)"
+      },
+      {
+        "command": "localCodeReview.postLastReview",
+        "title": "Post Last Review to GitHub",
+        "category": "Local Code Review",
+        "enablement": "localCodeReview.hasPrReview"
+      },
+      {
+        "command": "localCodeReview.openLastReport",
+        "title": "Open Last Review Report",
+        "category": "Local Code Review",
+        "enablement": "localCodeReview.hasReview"
+      },
+      {
+        "command": "localCodeReview.selectModel",
+        "title": "Select Model",
+        "category": "Local Code Review"
+      },
+      {
+        "command": "localCodeReview.testConnection",
+        "title": "Test LLM Connection",
+        "category": "Local Code Review"
+      },
+      {
+        "command": "localCodeReview.setApiKey",
+        "title": "Set LLM API Key",
+        "category": "Local Code Review"
+      },
+      {
+        "command": "localCodeReview.clearFindings",
+        "title": "Clear Findings",
+        "category": "Local Code Review"
+      },
+      {
+        "command": "localCodeReview.openSettings",
+        "title": "Open Settings",
+        "category": "Local Code Review"
+      },
+      {
+        "command": "localCodeReview.showMenu",
+        "title": "Show Menu",
+        "category": "Local Code Review"
+      }
+    ],
+    "menus": {
+      "scm/title": [
+        {
+          "command": "localCodeReview.reviewUncommitted",
+          "when": "scmProvider == git",
+          "group": "navigation@99"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "localCodeReview.showMenu",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": [
+      {
+        "title": "LLM Server",
+        "properties": {
+          "localCodeReview.provider": {
+            "type": "string",
+            "enum": [
+              "openai",
+              "ollama"
+            ],
+            "enumDescriptions": [
+              "Any OpenAI-compatible /v1/chat/completions server: vLLM, LM Studio, llama.cpp server, LocalAI, TGI, SGLang, Ollama's /v1 endpoint, etc.",
+              "Ollama's native /api/chat endpoint (lets the extension set num_ctx so long diffs are not silently truncated)."
+            ],
+            "default": "openai",
+            "order": 0,
+            "description": "Which API style to use when talking to your model server."
+          },
+          "localCodeReview.baseUrl": {
+            "type": "string",
+            "default": "http://localhost:8000/v1",
+            "order": 1,
+            "markdownDescription": "Base URL of the model server.\n\n- vLLM: `http://host:8000/v1`\n- Ollama (openai provider): `http://host:11434/v1`\n- Ollama (ollama provider): `http://host:11434`\n- LM Studio: `http://host:1234/v1`\n- llama.cpp: `http://host:8080/v1`"
+          },
+          "localCodeReview.model": {
+            "type": "string",
+            "default": "",
+            "order": 2,
+            "markdownDescription": "Model name as the server knows it (e.g. `Qwen/Qwen2.5-Coder-32B-Instruct` or `qwen2.5-coder:14b`). Leave empty to pick from the server's model list. Use **Local Code Review: Select Model** to choose one."
+          },
+          "localCodeReview.temperature": {
+            "type": "number",
+            "default": 0.1,
+            "minimum": 0,
+            "maximum": 2,
+            "order": 3,
+            "description": "Sampling temperature. Low values give more consistent reviews."
+          },
+          "localCodeReview.maxOutputTokens": {
+            "type": "integer",
+            "default": 4096,
+            "minimum": 256,
+            "order": 4,
+            "description": "Maximum tokens the model may generate per request (max_tokens / num_predict)."
+          },
+          "localCodeReview.jsonMode": {
+            "type": "string",
+            "enum": [
+              "json_object",
+              "json_schema",
+              "none"
+            ],
+            "enumDescriptions": [
+              "Send response_format {type: json_object} (vLLM, Ollama, LM Studio, llama.cpp). Ollama native: format \"json\".",
+              "Send the full JSON schema for guided/structured decoding (vLLM, newer Ollama, LM Studio). Most reliable when supported.",
+              "Don't request structured output; just parse JSON out of the reply."
+            ],
+            "default": "json_object",
+            "order": 5,
+            "description": "How to ask the server for structured JSON output. If the server rejects it, the extension falls back to 'none' automatically."
+          },
+          "localCodeReview.stream": {
+            "type": "boolean",
+            "default": true,
+            "order": 6,
+            "description": "Stream responses. Recommended: avoids Node's 5-minute header timeout on slow models and shows progress."
+          },
+          "localCodeReview.requestTimeoutSeconds": {
+            "type": "integer",
+            "default": 900,
+            "minimum": 10,
+            "order": 7,
+            "description": "Abort a single model request after this many seconds."
+          },
+          "localCodeReview.concurrency": {
+            "type": "integer",
+            "default": 1,
+            "minimum": 1,
+            "maximum": 16,
+            "order": 8,
+            "description": "How many diff chunks to send to the server at once. vLLM batches well, so 2-4 is fine there; keep 1 for Ollama on a single GPU."
+          },
+          "localCodeReview.ollamaNumCtx": {
+            "type": "integer",
+            "default": 16384,
+            "minimum": 2048,
+            "order": 9,
+            "description": "Context window (num_ctx) to request when provider is 'ollama'. Ollama's default is small and silently truncates prompts."
+          },
+          "localCodeReview.extraHeaders": {
+            "type": "object",
+            "default": {},
+            "additionalProperties": {
+              "type": "string"
+            },
+            "order": 10,
+            "description": "Extra HTTP headers to send to the model server (e.g. for a reverse proxy). The API key itself is stored securely via 'Local Code Review: Set LLM API Key'."
+          },
+          "localCodeReview.extraBody": {
+            "type": "object",
+            "default": {},
+            "order": 11,
+            "markdownDescription": "Extra fields merged into every chat request body. Examples:\n\n- Turn off thinking on Qwen3-style models in vLLM/SGLang (much faster reviews): `{\"chat_template_kwargs\": {\"enable_thinking\": false}}`\n- Ollama: `{\"think\": false}` or `{\"options\": {\"top_k\": 20}}`\n- Sampling extras: `{\"top_p\": 0.9, \"top_k\": 20}`"
+          }
+        }
+      },
+      {
+        "title": "Review",
+        "properties": {
+          "localCodeReview.maxChunkChars": {
+            "type": "integer",
+            "default": 24000,
+            "minimum": 2000,
+            "order": 20,
+            "markdownDescription": "Diffs are split into chunks of at most this many characters per request (roughly 3.5 chars per token). Size it to your model's context window minus `maxOutputTokens` and ~1k tokens of prompt: e.g. 24000 for a 16k-context model, 90000 for 32k."
+          },
+          "localCodeReview.contextLines": {
+            "type": "integer",
+            "default": 5,
+            "minimum": 0,
+            "maximum": 50,
+            "order": 21,
+            "description": "Lines of unchanged context around each change in local diffs (git diff -U)."
+          },
+          "localCodeReview.includeUntracked": {
+            "type": "boolean",
+            "default": true,
+            "order": 22,
+            "description": "Include new, untracked (but not ignored) files when reviewing uncommitted changes."
+          },
+          "localCodeReview.minimumSeverity": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "major",
+              "minor",
+              "nit"
+            ],
+            "default": "minor",
+            "order": 23,
+            "description": "Drop findings below this severity."
+          },
+          "localCodeReview.excludeGlobs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "**/package-lock.json",
+              "**/yarn.lock",
+              "**/pnpm-lock.yaml",
+              "**/composer.lock",
+              "**/Cargo.lock",
+              "**/poetry.lock",
+              "**/go.sum",
+              "**/*.min.js",
+              "**/*.min.css",
+              "**/*.map",
+              "**/*.snap",
+              "**/*.svg",
+              "**/dist/**",
+              "**/build/**",
+              "**/vendor/**",
+              "**/node_modules/**"
+            ],
+            "order": 24,
+            "description": "Files matching these globs are not sent to the model. Patterns without a '/' match the file name in any directory."
+          },
+          "localCodeReview.extraInstructions": {
+            "type": "string",
+            "default": "",
+            "editPresentation": "multilineText",
+            "order": 25,
+            "description": "Extra instructions appended to the review prompt (e.g. 'This is a WordPress plugin; flag missing escaping and nonce checks')."
+          },
+          "localCodeReview.instructionsFile": {
+            "type": "string",
+            "default": ".github/code-review-instructions.md",
+            "order": 26,
+            "description": "Repo-relative path of a file with project-specific review guidelines. Read from the working tree for local reviews and from the PR's base branch for PR reviews. Leave empty to disable."
+          },
+          "localCodeReview.showStatusBar": {
+            "type": "boolean",
+            "default": true,
+            "order": 27,
+            "description": "Show a 'Review' button in the status bar."
+          }
+        }
+      },
+      {
+        "title": "GitHub",
+        "properties": {
+          "localCodeReview.github.apiUrl": {
+            "type": "string",
+            "default": "https://api.github.com",
+            "order": 40,
+            "markdownDescription": "GitHub REST API URL. For GitHub Enterprise Server use `https://your-host/api/v3` (and set `github-enterprise.uri` so VS Code can sign you in)."
+          },
+          "localCodeReview.github.auth": {
+            "type": "string",
+            "enum": [
+              "vscode",
+              "gh-cli"
+            ],
+            "enumDescriptions": [
+              "Use VS Code's built-in GitHub sign-in.",
+              "Use the token from the GitHub CLI (`gh auth token`). Useful when an org blocks VS Code's OAuth app."
+            ],
+            "default": "vscode",
+            "order": 41,
+            "description": "Where to get a GitHub token from."
+          },
+          "localCodeReview.github.postReview": {
+            "type": "string",
+            "enum": [
+              "ask",
+              "always",
+              "never"
+            ],
+            "enumDescriptions": [
+              "After a PR review finishes, ask whether to post it (as a submitted or a pending/draft review).",
+              "Post automatically when the review finishes.",
+              "Never post automatically; use 'Post Last Review to GitHub' manually."
+            ],
+            "default": "ask",
+            "order": 42,
+            "description": "Whether to post PR review findings back to GitHub."
+          },
+          "localCodeReview.github.reviewEvent": {
+            "type": "string",
+            "enum": [
+              "COMMENT",
+              "REQUEST_CHANGES_IF_BLOCKING",
+              "PENDING"
+            ],
+            "enumDescriptions": [
+              "Submit as a plain comment review.",
+              "Request changes when there is a critical or major finding, otherwise comment.",
+              "Create a pending (draft) review that you edit and submit yourself on GitHub."
+            ],
+            "default": "COMMENT",
+            "order": 43,
+            "description": "Review type used when posting automatically or via 'Post review'."
+          },
+          "localCodeReview.github.suggestionBlocks": {
+            "type": "boolean",
+            "default": false,
+            "order": 44,
+            "description": "Render the model's proposed code as GitHub ```suggestion blocks (one-click apply). Off by default because local models often get the exact line range slightly wrong."
+          }
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "test": "npm run compile && node --test out/test/*.test.js",
+    "package": "npm run compile && vsce package --skip-license --out local-code-review.vsix",
+    "test:vscode": "npm run compile && node out/test/vscode/run.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "~1.90.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.2.0",
+    "typescript": "^5.6.0"
+  }
+}
