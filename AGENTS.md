@@ -31,12 +31,14 @@ It can also post the result back to the PR as a GitHub review with inline commen
 | `src/config.ts` | CLI config: defaults < user file < repo `.diff-leppard.json` < `DIFF_LEPPARD_*` env < flags | no |
 | `src/format.ts` | Terminal (ANSI) rendering of results | no |
 | `src/formats.ts` | SARIF 2.1.0 and reviewdog rdjson output (validated against the official schemas) | no |
-| `src/flow.ts` | Shared review flows: `reviewPullRequest` (base-branch repo config → load → size → review), `makeLlm` | no |
+| `src/flow.ts` | Shared review flows (CLI, `watch`, MCP): `reviewLocalChanges`, `reviewPullRequest` (base-branch repo config → load → size → review), `makeLlm`, `defaultRepo` | no |
 | `src/watch.ts` | `diff-leppard watch`: GitHub search for PRs wanting your review, state file, lock, once-per-commit, posting | no |
+| `src/mcp.ts` | `diff-leppard mcp`: dependency-free MCP server (newline-delimited JSON-RPC over stdio). Tools: `review_local_changes`, `review_pull_request`, `check_model_server`. **Read-only by design**: never posts to GitHub | no |
 | `src/cli.ts` | CLI entry (`diff-leppard`, `gh diff-leppard`): arg parsing, posting prompt, exit codes | no |
 | `src/extension.ts` | **The only VS Code glue**: commands, settings, progress, diagnostics, auth, quick picks | yes |
 | `test/*.test.ts` | `node:test` unit tests + mock OpenAI/Ollama HTTP server tests | no |
 | `test/watch.test.ts` | `watch` and `pr` end to end against a mock GitHub API + mock model server | no |
+| `test/mcp.test.ts` | The MCP server end to end over stdio (handshake, tools, input checks, cancellation) | no |
 | `test/cli.test.ts` | Config layering and the CLI end-to-end against `test/fixtures/mock-openai.js` | no |
 | `dist/` | **Committed** build of `src/` (`npm run build`). The extension, CLI, gh extension, pre-commit hook and Action all run it, so installing from git needs no build. CI fails if it's stale. | – |
 | `bin/diff-leppard.js` | npm `bin` shim → `dist/cli.js` | – |

@@ -38,6 +38,7 @@ exports.getRepoRoot = getRepoRoot;
 exports.getHeadSha = getHeadSha;
 exports.getRemotes = getRemotes;
 exports.isNullSha = isNullSha;
+exports.resolveRef = resolveRef;
 exports.getLocalDiff = getLocalDiff;
 exports.readRepoFile = readRepoFile;
 const child_process_1 = require("child_process");
@@ -80,7 +81,10 @@ async function getRemotes(root) {
 function isNullSha(ref) {
     return !!ref && /^0+$/.test(ref);
 }
+/** Resolve a ref to a commit SHA. Refs come from users and agents (MCP), so nothing that git could read as an option. */
 async function resolveRef(root, ref) {
+    if (!ref || ref.startsWith('-'))
+        throw new Error(`Invalid git ref: ${ref}`);
     const sha = (await git(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], true)).trim();
     if (!sha)
         throw new Error(`Unknown git ref: ${ref}`);
