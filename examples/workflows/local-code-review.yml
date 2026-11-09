@@ -3,10 +3,16 @@
 # Reviews pull requests with YOUR model server (any OpenAI-compatible host: vLLM, Ollama, LM Studio,
 # llama.cpp, SGLang, LocalAI, a hosted provider…) and posts the result as a PR review.
 #
-# Setup (repo → Settings → Secrets and variables → Actions):
-#   variables:  LLM_BASE_URL   e.g. https://llm.example.com/v1   (must be reachable from the runner)
-#               LLM_MODEL      e.g. Qwen/Qwen2.5-Coder-32B-Instruct   (optional if the server has one model)
-#   secret:     LLM_API_KEY    (optional)
+# Setup (repo or org → Settings → Secrets and variables → Actions):
+#   LLM_BASE_URL   e.g. https://llm.example.com/v1 (must be reachable from the runner).
+#                  Make it a SECRET if the address is private: secrets are masked in logs (public repos have
+#                  public logs), variables are not. A variable works too; the secret wins if both exist.
+#   LLM_MODEL      variable, e.g. Qwen/Qwen2.5-Coder-32B-Instruct (optional if the server has one model)
+#   LLM_API_KEY    secret (optional)
+#
+#   gh secret set LLM_BASE_URL      # prompts for the value; add --org my-org --repos a,b to share across repos
+#   gh secret set LLM_API_KEY
+#   gh variable set LLM_MODEL --body "Qwen/Qwen2.5-Coder-32B-Instruct"
 #
 # Triggers:
 #   - automatically when a PR is opened / reopened / marked ready for review
@@ -62,7 +68,7 @@ jobs:
 
       - uses: georgestephanis/local-code-review-vscode@main
         with:
-          base-url: ${{ vars.LLM_BASE_URL }}
+          base-url: ${{ secrets.LLM_BASE_URL || vars.LLM_BASE_URL }}
           model: ${{ vars.LLM_MODEL }}
           api-key: ${{ secrets.LLM_API_KEY }}
           pr-number: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}

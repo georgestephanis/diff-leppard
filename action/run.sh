@@ -4,7 +4,12 @@ if [[ -z "${INPUT_PR_NUMBER:-}" ]]; then
   echo "::error::No pull request number. Run on pull_request / issue_comment events or set the pr-number input."
   exit 2
 fi
+# Keep the server address and credentials out of (possibly public) logs, even if passed as plain variables.
 [[ -n "${LCR_API_KEY:-}" ]] && echo "::add-mask::$LCR_API_KEY"
+[[ -n "${LCR_BASE_URL:-}" ]] && echo "::add-mask::$LCR_BASE_URL"
+if [[ -n "${LCR_EXTRA_HEADERS:-}" ]]; then
+  node -e 'for (const v of Object.values(JSON.parse(process.argv[1]))) console.log(`::add-mask::${v}`)' "$LCR_EXTRA_HEADERS"
+fi
 
 args=(pr "$INPUT_PR_NUMBER" --repo "$INPUT_REPOSITORY" --no-prompt --format markdown --output "$RUNNER_TEMP/local-code-review.json")
 case "${INPUT_REVIEW_EVENT:-comment}" in

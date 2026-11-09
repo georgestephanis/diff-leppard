@@ -182,9 +182,11 @@ Run `local-code-review config` to see the effective settings, with secrets redac
 
 Other repositories can have PRs reviewed by any OpenAI-compatible host. Copy [`examples/workflows/local-code-review.yml`](examples/workflows/local-code-review.yml) into `.github/workflows/`, then set:
 
-- **variable** `LLM_BASE_URL`, e.g. `https://llm.example.com/v1`
+- `LLM_BASE_URL`, e.g. `https://llm.example.com/v1`. Make this a **secret** if the address is private: secrets are masked in logs, and public repos have public logs. A plain **variable** also works; the secret wins if both exist.
 - **variable** `LLM_MODEL` (optional)
 - **secret** `LLM_API_KEY` (optional)
+
+Org-level secrets and variables work too, so one model server can serve many repos (`gh secret set LLM_API_KEY --org my-org --repos a,b`). Secrets aren't passed to workflows triggered by PRs from forks.
 
 The core of it:
 
@@ -198,7 +200,7 @@ jobs:
     steps:
       - uses: georgestephanis/local-code-review-vscode@main
         with:
-          base-url: ${{ vars.LLM_BASE_URL }}
+          base-url: ${{ secrets.LLM_BASE_URL || vars.LLM_BASE_URL }}
           model: ${{ vars.LLM_MODEL }}
           api-key: ${{ secrets.LLM_API_KEY }}
           review-event: comment      # comment | request-changes | none
