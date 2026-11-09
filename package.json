@@ -2,7 +2,7 @@
   "name": "diff-leppard",
   "displayName": "Diff Leppard",
   "description": "Diff Leppard: AI code review of uncommitted changes or GitHub pull requests using your own self-hosted LLM (vLLM, Ollama, LM Studio, llama.cpp, or any OpenAI-compatible server). VS Code extension, CLI, gh extension and GitHub Action.",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "publisher": "georgestephanis",
   "private": true,
   "license": "GPL-3.0-or-later",
@@ -75,7 +75,7 @@
       },
       {
         "command": "diffLeppard.reviewPullRequest",
-        "title": "Review GitHub Pull Request\u2026",
+        "title": "Review GitHub Pull Request…",
         "category": "Diff Leppard",
         "icon": "$(git-pull-request)"
       },
@@ -251,7 +251,7 @@
             "default": 0,
             "minimum": 0,
             "order": 20,
-            "markdownDescription": "Maximum diff characters per model request. `0` (default) = **auto**: sized to the model's context window as reported by the server (vLLM, apfel, \u2026; for the `ollama` provider, `ollamaNumCtx`), minus `maxOutputTokens` and prompt overhead, capped at 100,000. Falls back to 24,000 if the server doesn't report one. Set a number to override."
+            "markdownDescription": "Maximum diff characters per model request. `0` (default) = **auto**: sized to the model's context window as reported by the server (vLLM, apfel, …; for the `ollama` provider, `ollamaNumCtx`), minus `maxOutputTokens` and prompt overhead, capped at 100,000. Falls back to 24,000 if the server doesn't report one. Set a number to override."
           },
           "diffLeppard.contextLines": {
             "type": "integer",

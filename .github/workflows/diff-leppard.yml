@@ -1,5 +1,6 @@
 # Diff Leppard reviewing its own pull requests (dogfooding).
 # Uses the action from main (not from the PR), so a PR can't change the code that runs with these secrets.
+# (Tracks main on purpose, so every PR here dogfoods the latest action; other repos should pin @v1.)
 #
 # Secrets: LLM_BASE_URL, LLM_API_KEY. Variable: LLM_MODEL. See README → GitHub Action.
 name: Diff Leppard

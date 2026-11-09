@@ -205,7 +205,7 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: georgestephanis/diff-leppard@main
+      - uses: georgestephanis/diff-leppard@v1
         with:
           base-url: ${{ secrets.LLM_BASE_URL || vars.LLM_BASE_URL }}
           model: ${{ vars.LLM_MODEL }}
