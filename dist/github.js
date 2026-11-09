@@ -6,6 +6,7 @@ exports.parseRemoteUrl = parseRemoteUrl;
 exports.parsePrReference = parsePrReference;
 exports.formatCommentBody = formatCommentBody;
 exports.buildReviewPayload = buildReviewPayload;
+exports.summarizeSkipped = summarizeSkipped;
 exports.attributionLine = attributionLine;
 exports.postReview = postReview;
 const diff_1 = require("./diff");
@@ -205,7 +206,7 @@ function buildReviewPayload(result, pr, opts) {
         }
     }
     if (result.skippedFiles.length) {
-        body.push('', `<sub>Not reviewed: ${result.skippedFiles.map((s) => `\`${s.path}\` (${s.reason})`).join(', ')}</sub>`);
+        body.push('', `<sub>Not reviewed: ${summarizeSkipped(result.skippedFiles)}</sub>`);
     }
     if (result.errors.length) {
         body.push('', `<sub>⚠️ ${result.errors.length} part(s) of the diff could not be reviewed because the model request failed.</sub>`);
@@ -220,6 +221,24 @@ function buildReviewPayload(result, pr, opts) {
         payload.event = blocking ? 'REQUEST_CHANGES' : 'COMMENT';
     // PENDING: omit event so GitHub creates a draft review.
     return payload;
+}
+/** "`a.js` (binary); 16 files excluded by excludeGlobs (`dist/cli.js`, `dist/config.js`, … +14 more)" */
+function summarizeSkipped(skipped, listUpTo = 3) {
+    const byReason = new Map();
+    for (const s of skipped) {
+        if (!byReason.has(s.reason))
+            byReason.set(s.reason, []);
+        byReason.get(s.reason).push(s.path);
+    }
+    return [...byReason]
+        .map(([reason, paths]) => {
+        if (paths.length === 1)
+            return `\`${paths[0]}\` (${reason})`;
+        const shown = paths.slice(0, listUpTo).map((p) => `\`${p}\``);
+        const more = paths.length > listUpTo ? `, … +${paths.length - listUpTo} more` : '';
+        return `${paths.length} files ${reason} (${shown.join(', ')}${more})`;
+    })
+        .join('; ');
 }
 /** Footer crediting the tool and model (on by default; `github.attribution: false` turns it off). */
 function attributionLine(model) {

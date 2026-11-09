@@ -292,3 +292,15 @@ test('readRepoFile refuses paths outside the repo', async () => {
   assert.equal(await readRepoFile(root, '../../../../etc/hosts'), undefined);
   assert.equal(await readRepoFile(root, 'escape.md'), undefined);
 });
+
+test('skipped files are grouped by reason in review bodies', () => {
+  const { summarizeSkipped } = require('../src/github') as typeof import('../src/github');
+  const skipped = [
+    { path: 'img.png', reason: 'binary' },
+    ...['a', 'b', 'c', 'd', 'e'].map((n) => ({ path: `dist/${n}.js`, reason: 'excluded by excludeGlobs' })),
+  ];
+  assert.equal(
+    summarizeSkipped(skipped),
+    '`img.png` (binary); 5 files excluded by excludeGlobs (`dist/a.js`, `dist/b.js`, `dist/c.js`, … +2 more)',
+  );
+});
