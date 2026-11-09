@@ -304,3 +304,49 @@ test('skipped files are grouped by reason in review bodies', () => {
     '`img.png` (binary); 5 files excluded by excludeGlobs (`dist/a.js`, `dist/b.js`, `dist/c.js`, … +2 more)',
   );
 });
+
+test('SARIF and rdjson output', () => {
+  const { toSarif, toRdjson } = require('../src/formats') as typeof import('../src/formats');
+  const result: ReviewResult = {
+    summary: 'S',
+    model: 'm',
+    reviewedFiles: ['a.ts'],
+    skippedFiles: [],
+    chunkCount: 1,
+    errors: [],
+    durationMs: 1,
+    findings: [
+      { file: 'a.ts', line: 3, endLine: 4, severity: 'critical', category: 'security', title: 'SQLi', body: 'Use params', suggestion: 'q(?)', inline: true },
+      { file: 'a.ts', line: 9, severity: 'nit', title: 'Name', body: 'Name', suggestion: 'x', inline: true, lineAdjusted: true },
+      { file: '(unknown file)', severity: 'minor', title: 'Ghost', body: 'b', inline: false },
+    ],
+  };
+  const sarif = toSarif(result, '9.9.9') as any;
+  assert.equal(sarif.version, '2.1.0');
+  const run = sarif.runs[0];
+  assert.equal(run.tool.driver.version, '9.9.9');
+  assert.deepEqual(run.tool.driver.rules.map((r: any) => r.id), ['general', 'security']);
+  assert.equal(run.results.length, 2, 'findings without a real file are left out');
+  const [sqli, nit] = run.results;
+  assert.equal(sqli.level, 'error');
+  assert.equal(sqli.properties['security-severity'], '9.0');
+  assert.deepEqual(sqli.locations[0].physicalLocation.region, { startLine: 3, endLine: 4 });
+  assert.equal(sqli.message.text, 'SQLi\n\nUse params');
+  assert.equal(sqli.fixes[0].artifactChanges[0].replacements[0].insertedContent.text, 'q(?)\n');
+  assert.equal(nit.level, 'note');
+  assert.equal(nit.fixes, undefined, 'no fix when the location is approximate');
+  assert.equal(nit.properties.approximateLocation, true);
+  assert.match(sqli.partialFingerprints['diffLeppard/v1'], /^[0-9a-f]{32}$/);
+
+  const rd = toRdjson(result) as any;
+  assert.equal(rd.source.name, 'diff-leppard');
+  assert.equal(rd.diagnostics.length, 2);
+  assert.deepEqual(rd.diagnostics[0].location, { path: 'a.ts', range: { start: { line: 3 }, end: { line: 4 } } });
+  assert.equal(rd.diagnostics[0].severity, 'ERROR');
+  assert.deepEqual(rd.diagnostics[0].suggestions[0], { range: { start: { line: 3, column: 1 }, end: { line: 5, column: 1 } }, text: 'q(?)\n' });
+  assert.equal(rd.diagnostics[1].suggestions, undefined);
+  assert.equal(rd.diagnostics[1].severity, 'INFO');
+
+  const failed = toSarif({ ...result, errors: ['part 2 timed out'] }, '1') as any;
+  assert.equal(failed.runs[0].invocations[0].executionSuccessful, false);
+});
