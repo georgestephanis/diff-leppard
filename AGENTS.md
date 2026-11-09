@@ -47,6 +47,8 @@ It can also post the result back to the PR as a GitHub review with inline commen
 | `examples/workflows/` | Copy-paste workflow for other repos | – |
 | `.github/workflows/release.yml`, `scripts/release-notes.sh` | Tag → draft release with assets; publish → npm / Open VSX / VS Code Marketplace / gh extension repo / move `vN` tag. See `docs/RELEASING.md` | – |
 | `gh-diff-leppard/standalone/` | Templates for the generated `georgestephanis/gh-diff-leppard` repo (wrapper pinned to the release via `npx diff-leppard@X.Y.Z`) | – |
+| `plugin/`, `lua/diff-leppard/`, `doc/` | Neovim plugin (Lua, 0.10+): runs the CLI with `-f json`, shows findings as diagnostics + quickfix. Lives at the repo root so plugin managers can install the repo directly | – |
+| `test/nvim/test.lua` | Headless Neovim tests with a fake CLI (`nvim --headless -u NONE -l test/nvim/test.lua`, Neovim 0.11+) | – |
 | `.github/workflows/ci.yml` | Tests, VSIX packaging, and an action smoke test against the mock server | – |
 | `test/vscode/` | Integration test that launches a real VS Code via `@vscode/test-electron` | yes |
 
@@ -61,6 +63,7 @@ npm run build          # tsc -> dist/ (the committed artifact; commit it with yo
 npm test               # compile + unit tests + mock-server tests (fast, no network)
 npm run test:vscode    # launches VS Code; set VSCODE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code" to skip the download
 npm run package        # -> diff-leppard.vsix
+nvim --headless -u NONE -l test/nvim/test.lua   # Neovim plugin tests
 ```
 
 Run `npm test` before you finish any change; it also rebuilds `dist/`. **Commit `dist/` together with your `src/` changes**, because CI fails when they differ. Anything imported by `src/cli.ts` must not import `vscode`: the CLI tests spawn `dist/cli.js` in plain Node and fail if it does. CLI settings mirror the extension's `diffLeppard.*` settings; when you add a setting, add it to `package.json`, `readSettings()` in `extension.ts`, `CliSettings`/`defaultSettings()` in `config.ts`, and an `DIFF_LEPPARD_*` env var / action input if CI users need it. Run `npm run test:vscode` when you change `extension.ts` or `package.json` contributions.

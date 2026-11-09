@@ -31,6 +31,20 @@ jobs:
       - run: npm test
       - run: npm run package
 
+  neovim:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Neovim
+        run: |
+          curl -fsSL https://github.com/neovim/neovim/releases/download/v0.11.4/nvim-linux-x86_64.tar.gz | tar xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/nvim-linux-x86_64/bin" >> "$GITHUB_PATH"
+      - run: nvim --version | head -1
+      - name: Plugin tests
+        run: nvim --headless -u NONE -l test/nvim/test.lua
+      - name: Help tags build
+        run: nvim --headless -u NONE -c "helptags doc" -c q && test -s doc/tags && rm doc/tags
+
   action-smoke:
     # Runs the GitHub Action from this checkout against a mock LLM server and the closed demo PR (#1), without posting.
     runs-on: ubuntu-latest
