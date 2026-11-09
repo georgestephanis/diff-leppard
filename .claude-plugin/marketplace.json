@@ -1,0 +1,14 @@
+{
+  "name": "diff-leppard",
+  "owner": {
+    "name": "George Stephanis"
+  },
+  "description": "Diff Leppard: code reviews from your own self-hosted LLM, for Claude Code.",
+  "plugins": [
+    {
+      "name": "diff-leppard",
+      "source": "./",
+      "description": "Code reviews from your own self-hosted LLM (vLLM, Ollama, any OpenAI-compatible server) with Diff Leppard."
+    }
+  ]
+}

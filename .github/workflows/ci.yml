@@ -20,6 +20,14 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - name: dist/ is up to date
+        run: |
+          npm run build
+          if [ -n "$(git status --porcelain -- dist)" ]; then
+            git status --short -- dist
+            echo "::error::dist/ is out of date. Run 'npm run build' and commit the result."
+            exit 1
+          fi
       - run: npm test
       - run: npm run package
 

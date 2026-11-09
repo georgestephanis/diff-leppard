@@ -4,6 +4,7 @@
   "description": "Diff Leppard: AI code review of uncommitted changes or GitHub pull requests using your own self-hosted LLM (vLLM, Ollama, LM Studio, llama.cpp, or any OpenAI-compatible server). VS Code extension, CLI, gh extension and GitHub Action.",
   "version": "1.0.1",
   "publisher": "georgestephanis",
+  "icon": "media/icon.png",
   "private": true,
   "license": "GPL-3.0-or-later",
   "repository": {
@@ -29,16 +30,17 @@
     "pull request",
     "diff-leppard"
   ],
-  "main": "./out/src/extension.js",
+  "main": "./dist/extension.js",
   "bin": {
     "diff-leppard": "bin/diff-leppard.js"
   },
   "files": [
     "bin/",
-    "out/src/**/*.js",
+    "dist/",
     "gh-diff-leppard/gh-diff-leppard",
     "AGENTS.md",
-    "LICENSE"
+    "LICENSE",
+    "media/icon.png"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -75,7 +77,7 @@
       },
       {
         "command": "diffLeppard.reviewPullRequest",
-        "title": "Review GitHub Pull Request…",
+        "title": "Review GitHub Pull Request\u2026",
         "category": "Diff Leppard",
         "icon": "$(git-pull-request)"
       },
@@ -251,7 +253,7 @@
             "default": 0,
             "minimum": 0,
             "order": 20,
-            "markdownDescription": "Maximum diff characters per model request. `0` (default) = **auto**: sized to the model's context window as reported by the server (vLLM, apfel, …; for the `ollama` provider, `ollamaNumCtx`), minus `maxOutputTokens` and prompt overhead, capped at 100,000. Falls back to 24,000 if the server doesn't report one. Set a number to override."
+            "markdownDescription": "Maximum diff characters per model request. `0` (default) = **auto**: sized to the model's context window as reported by the server (vLLM, apfel, \u2026; for the `ollama` provider, `ollamaNumCtx`), minus `maxOutputTokens` and prompt overhead, capped at 100,000. Falls back to 24,000 if the server doesn't report one. Set a number to override."
           },
           "diffLeppard.contextLines": {
             "type": "integer",
@@ -399,12 +401,13 @@
   },
   "scripts": {
     "compile": "tsc -p .",
+    "build": "tsc -p tsconfig.dist.json",
     "watch": "tsc -watch -p .",
-    "test": "npm run compile && node --test out/test/*.test.js",
-    "package": "npm run compile && vsce package --out diff-leppard.vsix",
-    "test:vscode": "npm run compile && node out/test/vscode/run.js",
-    "prepare": "tsc -p .",
-    "cli": "node out/src/cli.js"
+    "test": "npm run compile && npm run build && node --test out/test/*.test.js",
+    "test:vscode": "npm run compile && npm run build && node out/test/vscode/run.js",
+    "cli": "npm run -s build && node dist/cli.js",
+    "package": "npm run build && vsce package --out diff-leppard.vsix",
+    "vscode:prepublish": "npm run build"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

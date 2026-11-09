@@ -1,0 +1,27 @@
+# pre-commit hooks (https://pre-commit.com). See README → "pre-commit".
+#
+# At the pre-commit stage these review your staged changes; at pre-push, the commits being pushed.
+# Reviews take seconds to minutes, so pre-push or manual are usually the right stages.
+# Configure the model server in ~/.config/diff-leppard/config.json or DIFF_LEPPARD_* variables.
+
+- id: diff-leppard
+  name: Diff Leppard (AI code review)
+  description: Review staged changes or pushed commits with your self-hosted LLM; fail on findings at or above --fail-on.
+  entry: diff-leppard hook
+  language: node
+  args: [--fail-on, critical]
+  pass_filenames: false
+  require_serial: true
+  stages: [pre-commit, pre-push, manual]
+  minimum_pre_commit_version: "3.2.0"
+
+- id: diff-leppard-system
+  name: Diff Leppard (AI code review, uses diff-leppard from PATH)
+  description: Same as diff-leppard, but runs an already-installed diff-leppard instead of installing it.
+  entry: diff-leppard hook
+  language: system
+  args: [--fail-on, critical]
+  pass_filenames: false
+  require_serial: true
+  stages: [pre-commit, pre-push, manual]
+  minimum_pre_commit_version: "3.2.0"

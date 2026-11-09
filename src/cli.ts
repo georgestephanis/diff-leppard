@@ -13,7 +13,7 @@ import { CliSettings, loadConfig, parseJsonc, readRepoConfig, REPO_CONFIG_FILE, 
 import { makeExcluder } from './diff';
 import { renderTerminal } from './format';
 import { ghExec, githubRemotes, githubTokenFor } from './gh';
-import { getLocalDiff, getRepoRoot, readRepoFile } from './git';
+import { getLocalDiff, getRepoRoot, git as gitText, readRepoFile } from './git';
 import { GitHubClient, parsePrReference, postReview, RepoRef, ReviewEventSetting, webHostFromApiUrl } from './github';
 import { healthCheck, LlmClient, LlmConfig, LlmError, resolveChunkChars } from './llm';
 import { loadPullRequest } from './pr';
@@ -26,8 +26,11 @@ const HELP = `diff-leppard — AI code review with your own LLM server (vLLM, Ol
 Usage:
   diff-leppard pr [<number> | <url> | <owner/repo#number>] [options]
       Review a GitHub pull request. With no argument, reviews the PR for the current branch.
-  diff-leppard local [--staged] [options]
-      Review uncommitted changes (or only staged changes) in the current git repo.
+  diff-leppard local [--staged | --base <ref> | --range <a>..<b>] [options]
+      Review uncommitted changes in the current git repo; or only staged changes; or everything since
+      branching from <ref> (committed + uncommitted, e.g. --base main); or exactly the commits a..b
+      (a...b = since their merge-base).
+  diff-leppard hook             For pre-commit: staged changes at pre-commit, the pushed commits at pre-push
   diff-leppard models          List models on the configured server
   diff-leppard test            Check the server connection with a tiny request
   diff-leppard config          Show the effective configuration and where it came from
@@ -64,6 +67,8 @@ Other:
   -R, --repo <owner/repo>   Repository for a bare PR number (default: gh's default repo / git remotes)
   -C, --cwd <dir>           Run as if started in <dir>
       --staged              (local) only staged changes
+      --base <ref>          (local) everything since the merge-base with <ref>, e.g. main or origin/main
+      --range <a>..<b>      (local) exactly the commits between two refs
   -h, --help
       --version
 
@@ -80,6 +85,20 @@ Exit codes: 0 success · 1 findings at/above --fail-on · 2 error, or the review
 `;
 
 class UsageError extends Error {}
+
+/** Version from package.json; works from dist/ (one level down) and out/src/ (two levels). */
+function packageVersion(): string {
+  for (const rel of ['../package.json', '../../package.json']) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const pkg = require(rel);
+      if (pkg?.name === 'diff-leppard') return pkg.version;
+    } catch {
+      /* try the next location */
+    }
+  }
+  return 'unknown';
+}
 
 /** Whether a stream is an interactive terminal (decides text vs. Markdown output and the spinner). */
 const isTTY = (s: NodeJS.WriteStream) => !!s.isTTY && process.env.TERM !== 'dumb';
@@ -200,6 +219,8 @@ export async function main(argv: string[]): Promise<number> {
       repo: { type: 'string', short: 'R' },
       cwd: { type: 'string', short: 'C' },
       staged: { type: 'boolean' },
+      base: { type: 'string' },
+      range: { type: 'string' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean' },
     },
@@ -210,14 +231,13 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   }
   if (o.version) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    process.stdout.write(`${require('../../package.json').version}\n`);
+    process.stdout.write(`${packageVersion()}\n`);
     return 0;
   }
 
   let command = positionals[0] ?? 'pr';
   let rest = positionals.slice(1);
-  if (!['pr', 'local', 'staged', 'models', 'test', 'config', 'help'].includes(command)) {
+  if (!['pr', 'local', 'staged', 'hook', 'models', 'test', 'config', 'help'].includes(command)) {
     // `diff-leppard 123` / `gh diff-leppard https://…` → pr
     command = 'pr';
     rest = positionals;
@@ -230,6 +250,17 @@ export async function main(argv: string[]): Promise<number> {
     command = 'local';
     o.staged = true;
   }
+  if (command === 'hook') {
+    // pre-commit (https://pre-commit.com) exports these for pre-push; otherwise review what's staged.
+    const from = process.env.PRE_COMMIT_FROM_REF;
+    const to = process.env.PRE_COMMIT_TO_REF;
+    if (from && to) o.range = `${from}..${to}`;
+    else o.staged = true;
+    o['no-prompt'] = true;
+    o.format ??= 'text';
+    command = 'local';
+  }
+  if ([o.staged, o.base, o.range].filter(Boolean).length > 1) throw new UsageError('Use only one of --staged, --base and --range');
 
   const cwd = path.resolve(o.cwd ?? process.cwd());
   const root = await getRepoRoot(cwd);
@@ -269,7 +300,7 @@ export async function main(argv: string[]): Promise<number> {
     return loaded;
   };
   // PR reviews take repo config from the PR's base branch (below); local reviews from the working tree.
-  const isPr = !['local', 'staged', 'models', 'test', 'config'].includes(command);
+  const isPr = !['local', 'models', 'test', 'config'].includes(command);
   let { settings: s, sources, warnings } = await configure(isPr ? undefined : await readRepoConfig(root));
 
   const progress = new Progress(!o.quiet, isTTY(process.stderr));
@@ -345,14 +376,38 @@ export async function main(argv: string[]): Promise<number> {
     if (command === 'local') {
       if (!root) throw new UsageError(`${cwd} is not inside a git repository`);
       progress.update('Collecting diff…');
-      const diff = await getLocalDiff(root, {
-        stagedOnly: !!o.staged,
-        contextLines: s.contextLines,
-        includeUntracked: s.includeUntracked,
-        maxUntrackedBytes: 256 * 1024,
-        exclude,
-      });
-      const what = o.staged ? 'staged changes' : 'uncommitted changes';
+      let range: { from: string; to: string } | undefined;
+      if (o.range) {
+        const m = /^(.+?)(\.{2,3})(.+)$/.exec(o.range);
+        if (!m) throw new UsageError('--range must look like <from>..<to> (or <from>...<to> for "since the merge-base")');
+        range = { from: m[1], to: m[3] };
+        if (m[2] === '...') {
+          const mb = (await gitText(root, ['merge-base', m[1], m[3]])).trim();
+          if (!mb) throw new UsageError(`No common ancestor between ${m[1]} and ${m[3]}`);
+          range.from = mb;
+        }
+      }
+      let diff;
+      try {
+        diff = await getLocalDiff(root, {
+          stagedOnly: !!o.staged,
+          base: o.base,
+          range,
+          contextLines: s.contextLines,
+          includeUntracked: s.includeUntracked,
+          maxUntrackedBytes: 256 * 1024,
+          exclude,
+        });
+      } catch (e) {
+        throw new UsageError((e as Error).message);
+      }
+      const what = o.range
+        ? `commits ${o.range}`
+        : o.base
+          ? `changes since ${o.base}`
+          : o.staged
+            ? 'staged changes'
+            : 'uncommitted changes';
       if (!diff.files.length) {
         progress.clear();
         process.stderr.write(`No ${what} in ${path.basename(root)}.\n`);
@@ -369,7 +424,7 @@ export async function main(argv: string[]): Promise<number> {
         preSkipped: diff.skipped,
       });
       title = `Review of ${what} — ${path.basename(root)}`;
-      markdown = () => renderMarkdownReport(result, { title, source: `${o.staged ? 'Staged' : 'Uncommitted'} changes in **${path.basename(root)}**` });
+      markdown = () => renderMarkdownReport(result, { title, source: `${what[0].toUpperCase()}${what.slice(1)} in **${path.basename(root)}**` });
     } else {
       const host = webHostFromApiUrl(s.github.apiUrl);
       const arg = rest[0];
@@ -486,7 +541,7 @@ function llmBase(s: CliSettings): Omit<LlmConfig, 'model'> {
   };
 }
 
-/** Run the CLI and exit the process with its status code. Used by bin/diff-leppard.js and `node out/src/cli.js`. */
+/** Run the CLI and exit the process with its status code. Used by bin/diff-leppard.js and `node dist/cli.js`. */
 export function run(argv: string[] = process.argv.slice(2)): void {
   main(argv).then(
     (code) => process.exit(code),

@@ -84,9 +84,6 @@ runs:
     - uses: actions/setup-node@v5
       with:
         node-version: "22"
-    - name: Build Diff Leppard CLI
-      shell: bash
-      run: '"$GITHUB_ACTION_PATH/action/build.sh"'
     - name: Review pull request
       id: review
       shell: bash

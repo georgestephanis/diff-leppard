@@ -1,0 +1,10 @@
+{
+  "name": "diff-leppard",
+  "description": "Get code reviews from your own self-hosted LLM with Diff Leppard: set it up, troubleshoot it, review local changes or GitHub PRs, and use it as a second opinion on Claude's work.",
+  "version": "1.0.1",
+  "author": { "name": "George Stephanis" },
+  "homepage": "https://github.com/georgestephanis/diff-leppard",
+  "repository": "https://github.com/georgestephanis/diff-leppard",
+  "license": "GPL-3.0-or-later",
+  "keywords": ["code-review", "vllm", "ollama", "self-hosted", "llm"]
+}

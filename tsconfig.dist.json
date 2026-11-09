@@ -1,0 +1,7 @@
+{
+  // Committed build: dist/ is what the VS Code extension, the CLI (npm bin), the gh extension and the
+  // GitHub Action run, so none of them need a build step. CI checks it matches src/ (npm run build).
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "outDir": "dist", "rootDir": "src", "sourceMap": false },
+  "include": ["src/**/*.ts"]
+}

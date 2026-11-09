@@ -4,7 +4,7 @@
 
 AI code review on **your own model server**. It works with vLLM, Ollama, LM Studio, llama.cpp, SGLang, LocalAI, or anything else that speaks the OpenAI `/v1/chat/completions` API. Your code goes only to your server, and to GitHub if you post the review.
 
-It reviews **uncommitted or staged changes** or a **GitHub pull request**. It can post the result as a **real PR review**, with inline comments on the changed lines, as a submitted review, a "request changes", or a draft for you to edit first. There are four ways to run it:
+It reviews **uncommitted or staged changes** or a **GitHub pull request**. It can post the result as a **real PR review**, with inline comments on the changed lines, as a submitted review, a "request changes", or a draft for you to edit first. Pick how you want to run it:
 
 | | Use it for | Quick start |
 | --- | --- | --- |
@@ -12,8 +12,10 @@ It reviews **uncommitted or staged changes** or a **GitHub pull request**. It ca
 | ⌨️ **CLI**: `diff-leppard` | Terminals, scripts, pre-commit hooks, CI | [↓](#command-line) |
 | 🐙 **`gh` extension**: `gh diff-leppard` | `gh diff-leppard 123 --post` from any checkout | [↓](#gh-extension) |
 | 🤖 **GitHub Action** | Automatic reviews on PRs in any repo, or on demand with `/review` | [↓](#github-action) |
+| 🪝 **pre-commit hook** | Review staged changes before commit, or pushed commits before push | [↓](#pre-commit) |
+| ✳️ **Claude Code plugin** | Claude sets up and runs Diff Leppard for you, and gets a second opinion from your model on its own work | [↓](#claude-code-plugin) |
 
-All four share the same review engine, prompt and settings.
+All of them share the same review engine, prompt and settings.
 
 ![Diff Leppard in VS Code: findings in the editor, Problems panel and report](docs/screenshots/local-review.png)
 
@@ -142,6 +144,8 @@ diff-leppard pr owner/repo#123 --post # review and post as a comment review
 diff-leppard pr --draft               # PR for the current branch → pending review you edit on GitHub
 diff-leppard local                    # uncommitted changes in the current repo
 diff-leppard local --staged --fail-on major   # pre-commit / CI style: exit 1 on major+ findings
+diff-leppard local --base main        # everything on this branch since it left main (committed + uncommitted)
+diff-leppard local --range v1.0.0..HEAD   # exactly these commits (a...b = since their merge-base)
 diff-leppard pr 123 -f json           # machine-readable output (also: -f markdown, -o report.md)
 ```
 
@@ -174,9 +178,8 @@ The exit codes are:
 ## `gh` extension
 
 ```bash
-git clone https://github.com/georgestephanis/diff-leppard && cd diff-leppard
-npm install
-cd gh-diff-leppard && gh extension install .
+git clone https://github.com/georgestephanis/diff-leppard
+cd diff-leppard/gh-diff-leppard && gh extension install .   # needs only Node; dist/ is prebuilt
 
 gh diff-leppard              # PR for the current branch
 gh diff-leppard 123 --post
@@ -226,6 +229,33 @@ Things to know:
   - expose the server over HTTPS behind an API key or an auth proxy (put proxy headers in `extra-headers` from secrets).
 - **Fork PRs don't get secrets** on `pull_request` events. The example skips them; a maintainer can `/review` instead. The action never checks out or runs PR code. It reads the diff through the API, and the workflow only needs `contents: read` and `pull-requests: write`.
 - **Inputs:** `base-url`, `model`, `api-key`, `provider`, `extra-headers`, `extra-body`, `json-mode`, `review-event`, `attribution`, `min-severity`, `fail-on`, `max-chunk-chars`, `max-output-tokens`, `concurrency`, `timeout-seconds`, `extra-instructions`, `pr-number`, `repository`, `github-token`. See [`action.yml`](action.yml).
+
+## pre-commit
+
+Add Diff Leppard to [pre-commit](https://pre-commit.com). At the `pre-commit` stage it reviews your staged changes; at `pre-push` it reviews the commits being pushed. A review takes seconds to minutes, so `pre-push` or `manual` usually suit it better than every commit.
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/georgestephanis/diff-leppard
+    rev: v1.0.1
+    hooks:
+      - id: diff-leppard            # or diff-leppard-system to use the diff-leppard on your PATH
+        stages: [pre-push]
+        args: [--fail-on, critical] # block the push on critical findings (the default)
+```
+
+It uses your normal config (`~/.config/diff-leppard/config.json` or `DIFF_LEPPARD_*`). Run it on demand with `pre-commit run diff-leppard --hook-stage manual`. Outside pre-commit, `diff-leppard hook` does the same thing.
+
+## Claude Code plugin
+
+The plugin adds a skill that teaches Claude Code to install, configure and troubleshoot Diff Leppard and to run reviews with it. That includes asking your self-hosted model for a **second opinion on Claude's own changes**: Claude checks each finding against the code, fixes the real problems and tells you what it dismissed.
+
+```
+/plugin install diff-leppard --marketplace georgestephanis/diff-leppard
+```
+
+On older Claude Code versions, run `/plugin marketplace add georgestephanis/diff-leppard`, then `/plugin install diff-leppard@diff-leppard`. The skill is in [`skills/diff-leppard/SKILL.md`](skills/diff-leppard/SKILL.md).
 
 ## How posted reviews work
 

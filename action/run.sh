@@ -22,7 +22,7 @@ esac
 
 report="$RUNNER_TEMP/diff-leppard.md"
 set +e
-node "$GITHUB_ACTION_PATH/out/src/cli.js" "${args[@]}" >"$report"
+node "$GITHUB_ACTION_PATH/dist/cli.js" "${args[@]}" >"$report"
 code=$?
 set -e
 
