@@ -3,7 +3,7 @@ import http from 'node:http';
 import { AddressInfo } from 'node:net';
 import { after, before, test } from 'node:test';
 import { parseUnifiedDiff } from '../src/diff';
-import { FALLBACK_CHUNK_CHARS, LlmClient, LlmConfig, MAX_AUTO_CHUNK_CHARS, resolveChunkChars } from '../src/llm';
+import { FALLBACK_CHUNK_CHARS, findRepetitionLoop, LlmClient, LlmConfig, MAX_AUTO_CHUNK_CHARS, resolveChunkChars } from '../src/llm';
 import { runReview } from '../src/review';
 import { nullLogger } from '../src/types';
 
@@ -11,6 +11,15 @@ const REVIEW = {
   summary: 'Introduces an off-by-one.',
   findings: [{ file: 'src/loop.js', line: 2, severity: 'major', category: 'bug', title: 'Off by one', body: 'Use < not <=' }],
 };
+
+const FINDING = JSON.stringify(REVIEW.findings[0]);
+/** Streams that never end on their own: [prefix, repeated unit]. */
+const LOOPS: Record<string, [string, string]> = {
+  'loopy-findings': ['{"summary": "Introduces an off-by-one.", "findings": [', FINDING + ', '],
+  'loopy-whitespace': [JSON.stringify(REVIEW).slice(0, -1), '\n'],
+};
+/** Per loop model: how many chunks the server sent before the client hung up (or -1 if it never did). */
+const loopChunksSent: Record<string, number> = {};
 
 const requests: any[] = [];
 let server: http.Server;
@@ -39,6 +48,28 @@ before(async () => {
         if (json.model === 'strict' && json.response_format) {
           res.statusCode = 400;
           return res.end(JSON.stringify({ error: { message: "response_format is not supported" } }));
+        }
+        const loop = LOOPS[json.model];
+        if (loop && json.stream) {
+          res.setHeader('content-type', 'text/event-stream');
+          const send = (text: string) => res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`);
+          send(loop[0]);
+          let sent = 0;
+          let closed = false;
+          res.on('close', () => {
+            closed = true;
+            loopChunksSent[json.model] = sent;
+          });
+          const tick = () => {
+            if (closed) return;
+            if (sent >= 20000) {
+              loopChunksSent[json.model] = -1;
+              return res.end('data: [DONE]\n\n');
+            }
+            for (let k = 0; k < 20; k++, sent++) send(loop[1]);
+            setImmediate(tick);
+          };
+          return tick();
         }
         const content = '<think>hmm</think>' + JSON.stringify(REVIEW);
         if (json.stream) {
@@ -109,6 +140,62 @@ test('openai: falls back when server rejects structured output', async () => {
 test('openai: helpful errors', async () => {
   await assert.rejects(new LlmClient(cfg({ baseUrl: base })).listModels(), /end in \/v1/);
   await assert.rejects(new LlmClient(cfg({ baseUrl: 'http://127.0.0.1:65531/v1' })).listModels(), /Could not reach .*ECONNREFUSED/);
+});
+
+test('findRepetitionLoop: catches loops, keeps one copy, ignores normal repetition', () => {
+  // Whitespace runaway: keep the JSON and one newline.
+  const ws = '{"summary": "s", "findings": []' + '\n'.repeat(5000);
+  assert.equal(findRepetitionLoop(ws), ws.indexOf('\n') + 1);
+  // The same finding over and over: keep exactly one copy.
+  const head = '{"summary": "s", "findings": [';
+  const looped = head + (FINDING + ', ').repeat(12);
+  assert.equal(looped.slice(0, findRepetitionLoop(looped)), head + FINDING + ', ');
+  // A longer span (a big finding) still needs only a few copies.
+  const big = 'x'.repeat(10) + ('{"title": "' + 'abcdefghij'.repeat(90) + '"}, ').repeat(5);
+  assert.ok(findRepetitionLoop(big) !== undefined);
+  // Not loops: a normal review, a suggestion with a few identical lines, short text.
+  assert.equal(findRepetitionLoop(JSON.stringify(REVIEW)), undefined);
+  const suggestion = JSON.stringify({ findings: [{ suggestion: '    assert.ok(thing);\n'.repeat(10) + 'done();' }] });
+  assert.equal(findRepetitionLoop(suggestion), undefined);
+  assert.equal(findRepetitionLoop('    '.repeat(40)), undefined);
+  assert.equal(findRepetitionLoop(''), undefined);
+});
+
+test('openai: stops a runaway stream early and hangs up so the server stops generating', async () => {
+  for (const model of Object.keys(LOOPS)) {
+    const t0 = Date.now();
+    const r = await new LlmClient(cfg({ model, maxOutputTokens: 100000 })).chat([{ role: 'user', content: 'hi' }]);
+    assert.equal(r.runaway, true, model);
+    assert.equal(r.truncated, true, model);
+    assert.ok(r.content.length < 2000, `${model}: kept ${r.content.length} chars`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(loopChunksSent[model] >= 0 && loopChunksSent[model] < 2000, `${model}: server sent ${loopChunksSent[model]} chunks`);
+    assert.ok(Date.now() - t0 < 4000, model);
+  }
+});
+
+test('runReview salvages the findings from a runaway reply', async () => {
+  const files = parseUnifiedDiff(`diff --git a/src/loop.js b/src/loop.js
+--- a/src/loop.js
++++ b/src/loop.js
+@@ -1,3 +1,3 @@
+ const xs = [1, 2, 3];
+-for (let i = 0; i < xs.length; i++) {
++for (let i = 0; i <= xs.length; i++) {
+   use(xs[i]);
+`);
+  const result = await runReview(files, {
+    llm: new LlmClient(cfg({ model: 'loopy-findings' })),
+    maxChunkChars: 10000,
+    concurrency: 1,
+    minimumSeverity: 'minor',
+    exclude: () => false,
+    context: { title: 'Loop fix' },
+    log: nullLogger,
+  });
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].title, 'Off by one');
 });
 
 test('ollama native: tags, NDJSON streaming, num_ctx and format', async () => {

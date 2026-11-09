@@ -30,9 +30,12 @@ It can also post the result back to the PR as a GitHub review with inline commen
 | `src/pr.ts` | Load a PR's files + review guidelines (shared by extension and CLI) | no |
 | `src/config.ts` | CLI config: defaults < user file < repo `.diff-leppard.json` < `DIFF_LEPPARD_*` env < flags | no |
 | `src/format.ts` | Terminal (ANSI) rendering of results | no |
+| `src/flow.ts` | Shared review flows: `reviewPullRequest` (base-branch repo config → load → size → review), `makeLlm` | no |
+| `src/watch.ts` | `diff-leppard watch`: GitHub search for PRs wanting your review, state file, lock, once-per-commit, posting | no |
 | `src/cli.ts` | CLI entry (`diff-leppard`, `gh diff-leppard`): arg parsing, posting prompt, exit codes | no |
 | `src/extension.ts` | **The only VS Code glue**: commands, settings, progress, diagnostics, auth, quick picks | yes |
 | `test/*.test.ts` | `node:test` unit tests + mock OpenAI/Ollama HTTP server tests | no |
+| `test/watch.test.ts` | `watch` and `pr` end to end against a mock GitHub API + mock model server | no |
 | `test/cli.test.ts` | Config layering and the CLI end-to-end against `test/fixtures/mock-openai.js` | no |
 | `dist/` | **Committed** build of `src/` (`npm run build`). The extension, CLI, gh extension, pre-commit hook and Action all run it, so installing from git needs no build. CI fails if it's stale. | – |
 | `bin/diff-leppard.js` | npm `bin` shim → `dist/cli.js` | – |

@@ -148,6 +148,22 @@ class GitHubClient {
         }
         return { files, skipped };
     }
+    /** Pull requests matching a GitHub search query (`is:pr` is added). Most recently updated first. */
+    async searchPullRequests(query, limit = 100) {
+        const q = /\bis:pr\b/.test(query) ? query : `is:pr ${query}`;
+        const out = [];
+        for (let page = 1; out.length < limit && page <= 10; page++) {
+            const j = (await (await this.req('GET', `/search/issues?q=${encodeURIComponent(q)}&sort=updated&order=desc&per_page=50&page=${page}`)).json());
+            for (const it of j.items ?? []) {
+                const m = /\/repos\/([^/]+)\/([^/]+)$/.exec(it.repository_url ?? '');
+                if (m)
+                    out.push({ repo: { owner: m[1], repo: m[2] }, number: it.number, title: it.title ?? '', url: it.html_url, draft: !!it.draft, author: it.user?.login ?? '' });
+            }
+            if ((j.items ?? []).length < 50)
+                break;
+        }
+        return out.slice(0, limit);
+    }
     async getFileContent(r, filePath, ref) {
         try {
             const res = await this.req('GET', `/repos/${r.owner}/${r.repo}/contents/${filePath.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`, undefined, 'application/vnd.github.raw+json');

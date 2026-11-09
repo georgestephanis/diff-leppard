@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Release automation:** pushing a `vX.Y.Z` tag tests the code, builds the `.vsix` and CLI tarball, and opens a draft release with notes from this changelog. Publishing the draft publishes to npm, Open VSX and the VS Code Marketplace, syncs the `gh-diff-leppard` repo and moves the `vX` tag. Each of those runs only if its secret is set, and publishing as a pre-release keeps the release quiet. See `docs/RELEASING.md`.
+- **Runaway replies are stopped early.** Models sometimes get stuck emitting the same thing over and over: a run of whitespace in JSON mode, or the same finding again and again. Diff Leppard used to wait for `maxOutputTokens`, which kept the GPU busy for minutes (one real case: 9 minutes at 15 tokens/s, for a 400-token review). It now spots the loop as it streams, hangs up so the server stops generating, keeps one copy of what was repeated, and salvages the findings. If nothing parses, it asks once more and tells the model it was repeating itself. Loops in a reasoning stream are caught too. This needs `stream: true`, which is the default.
 
 ## 1.1.0 (2026-11-09)
 

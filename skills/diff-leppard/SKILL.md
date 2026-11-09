@@ -100,6 +100,8 @@ Posting is visible to others and appears **as the user**. Only post when the use
       args: [--fail-on, critical]
 ```
 
+**`diff-leppard watch`** reviews PRs that request the user's review, across all their repos, and leaves a **draft** review on each, once per commit. Show `diff-leppard watch --dry-run` first. Settings are in a `watch` block in the user config (`event`, `reviewRequests`, `ownPullRequests`, `query`, `repos`/`excludeRepos`, `rereviewOnPush`, `maxPerRun`). Run it with `--once` from cron or a timer, or long-running using the systemd and launchd files in `docs/watch/`. Because it posts as the user, set it up only when they ask, and keep the default `PENDING` event unless they say otherwise.
+
 **GitHub Action:**
 
 1. Copy `examples/workflows/diff-leppard.yml` from the repo into `.github/workflows/`. It uses `georgestephanis/diff-leppard@v1`, needs `pull-requests: write`, and supports a `/review` comment trigger.
