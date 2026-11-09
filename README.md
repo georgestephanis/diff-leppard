@@ -134,7 +134,7 @@ Settings:
 The CLI has no runtime dependencies:
 
 ```bash
-npm install -g github:georgestephanis/diff-leppard   # installs `diff-leppard`
+npm install -g https://github.com/georgestephanis/diff-leppard/releases/latest/download/diff-leppard.tgz   # installs `diff-leppard`
 
 diff-leppard test                     # check the server connection
 diff-leppard pr 123                   # review PR #123 of the current repo (asks whether to post)

@@ -3,7 +3,7 @@
 # Reviews GitHub PRs (or local changes) with your self-hosted LLM via the diff-leppard CLI.
 #
 # Install from a clone of this repo:   npm install && cd gh-diff-leppard && gh extension install .
-# Set DIFF_LEPPARD_BIN to use a specific CLI build. Or put `diff-leppard` on PATH:  npm install -g github:georgestephanis/diff-leppard
+# Set DIFF_LEPPARD_BIN to use a specific CLI build. Or put `diff-leppard` on PATH:  npm install -g https://github.com/georgestephanis/diff-leppard/releases/latest/download/diff-leppard.tgz
 set -euo pipefail
 
 if [[ -n "${DIFF_LEPPARD_BIN:-}" ]]; then
@@ -26,6 +26,6 @@ elif command -v diff-leppard >/dev/null 2>&1; then
   exec diff-leppard "$@"
 else
   echo "gh diff-leppard: the CLI isn't built. Run 'npm install' in $(cd "$here/.." && pwd)," >&2
-  echo "or install it globally: npm install -g github:georgestephanis/diff-leppard" >&2
+  echo "or install it globally: npm install -g https://github.com/georgestephanis/diff-leppard/releases/latest/download/diff-leppard.tgz" >&2
   exit 2
 fi
