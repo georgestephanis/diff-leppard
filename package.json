@@ -5,6 +5,7 @@
   "version": "0.1.0",
   "publisher": "georgestephanis",
   "private": true,
+  "license": "GPL-3.0-or-later",
   "repository": {
     "type": "git",
     "url": "https://github.com/georgestephanis/diff-leppard.git"
@@ -36,7 +37,8 @@
     "bin/",
     "out/src/**/*.js",
     "gh-diff-leppard/",
-    "AGENTS.md"
+    "AGENTS.md",
+    "LICENSE"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -376,7 +378,7 @@
     "compile": "tsc -p .",
     "watch": "tsc -watch -p .",
     "test": "npm run compile && node --test out/test/*.test.js",
-    "package": "npm run compile && vsce package --skip-license --out diff-leppard.vsix",
+    "package": "npm run compile && vsce package --out diff-leppard.vsix",
     "test:vscode": "npm run compile && node out/test/vscode/run.js",
     "prepare": "tsc -p .",
     "cli": "node out/src/cli.js"

@@ -291,3 +291,7 @@ npm test                # unit, mock-server and CLI tests (node:test)
 npm run test:vscode     # runs the extension inside a real VS Code
 npm run cli -- --help   # the CLI from source
 ```
+
+## License
+
+[GPL-3.0-or-later](LICENSE) © George Stephanis
