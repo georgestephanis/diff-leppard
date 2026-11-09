@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# gh diff-leppard: AI code review with your own LLM server.
+# Generated from https://github.com/georgestephanis/diff-leppard (v__VERSION__). Don't edit this copy;
+# changes and issues go to the main repo.
+set -euo pipefail
+VERSION="__VERSION__"
+
+if [[ -n "${DIFF_LEPPARD_BIN:-}" ]]; then
+  exec "$DIFF_LEPPARD_BIN" "$@"
+elif command -v diff-leppard >/dev/null 2>&1; then
+  exec diff-leppard "$@"
+elif command -v npx >/dev/null 2>&1; then
+  exec npx --yes "diff-leppard@${VERSION}" "$@"
+else
+  echo "gh diff-leppard needs Node.js 20+ (for npx), or the CLI installed: npm install -g diff-leppard" >&2
+  exit 2
+fi
