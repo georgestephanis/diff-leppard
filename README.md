@@ -199,7 +199,7 @@ Any repository can have PRs reviewed by any OpenAI-compatible host. Copy [`examp
 - **variable** `LLM_MODEL` (optional)
 - **secret** `LLM_API_KEY` (optional)
 
-Org-level secrets and variables work too, so one model server can serve many repos (`gh secret set LLM_API_KEY --org my-org --repos a,b`).
+Org-level secrets and variables work too, so one model server can serve many repos (`gh secret set LLM_API_KEY --org my-org --repos a,b`). To roll it out across an organization (a workflow template, a [reusable workflow](examples/workflows/diff-leppard-reusable.yml) with settings in one place, or a workflow required by an org ruleset), see [docs/ORG-ROLLOUT.md](docs/ORG-ROLLOUT.md).
 
 The core of it:
 
@@ -314,7 +314,8 @@ Reviews run in the background. Findings show up as diagnostics (critical and maj
 
 It is **read-only**: it never posts to GitHub. Reviews run one at a time, report progress, and can be cancelled. Results come back as the same JSON as `-f json`, and the server tells the agent to verify findings before acting on them.
 
-Register it with your agent. The command is the same everywhere (`diff-leppard mcp`, or `npx -y diff-leppard mcp`):
+Register it with your agent. The command is the same everywhere: `diff-leppard mcp`, with the CLI [installed](#command-line).
+
 
 ```bash
 claude mcp add diff-leppard -- diff-leppard mcp            # Claude Code

@@ -1,0 +1,84 @@
+# A reusable Diff Leppard workflow for organizations. See docs/ORG-ROLLOUT.md.
+#
+# Put this in a central repo, e.g. my-org/ci-workflows/.github/workflows/diff-leppard.yml, and call it from
+# each repo with a few lines (below). The model, severity and other settings then live in one place.
+#
+# Each repo's .github/workflows/diff-leppard.yml:
+#
+#   name: Diff Leppard
+#   on:
+#     pull_request:
+#       types: [opened, reopened, ready_for_review]
+#     issue_comment:
+#       types: [created]
+#   permissions:
+#     contents: read
+#     pull-requests: write
+#   jobs:
+#     review:
+#       uses: my-org/ci-workflows/.github/workflows/diff-leppard.yml@main
+#       secrets: inherit      # passes the org's LLM_BASE_URL / LLM_API_KEY secrets through
+#
+# If the central repo is private, allow access to it: its Settings → Actions → General → Access →
+# "Accessible from repositories in the organization".
+name: Diff Leppard (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      pr:
+        description: "PR number (default: the PR from the calling event)"
+        type: string
+        required: false
+      model:
+        description: "Model name (default: the LLM_MODEL variable)"
+        type: string
+        required: false
+      min-severity:
+        type: string
+        default: minor
+      fail-on:
+        description: "Fail the check on findings at or above this severity, e.g. critical. Empty: never."
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    # In a called workflow, `github.event` is the caller's event, so the same guards as the single-repo
+    # example apply: no fork PRs (no secrets there), and /review only from people with write access.
+    if: >-
+      inputs.pr != '' ||
+      (github.event_name == 'pull_request' && !github.event.pull_request.draft &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       startsWith(github.event.comment.body, '/review') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    runs-on: ubuntu-latest   # or a self-hosted runner group that can reach your model server
+    timeout-minutes: 30
+    concurrency:
+      # One review at a time per PR. Comments that aren't "/review" get their own group, so a stray comment
+      # can't cancel a review in progress, even if this job is reached for one.
+      group: >-
+        diff-leppard-${{ github.repository }}-${{ inputs.pr || github.event.pull_request.number || github.event.issue.number }}-${{
+        (github.event_name == 'issue_comment' && !startsWith(github.event.comment.body, '/review')) && github.event.comment.id || 'review' }}
+      cancel-in-progress: true
+    steps:
+      - name: Acknowledge /review
+        if: github.event_name == 'issue_comment'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content=eyes >/dev/null
+
+      - uses: georgestephanis/diff-leppard@v1
+        with:
+          base-url: ${{ secrets.LLM_BASE_URL || vars.LLM_BASE_URL }}
+          model: ${{ inputs.model || vars.LLM_MODEL }}
+          api-key: ${{ secrets.LLM_API_KEY }}
+          pr-number: ${{ inputs.pr || github.event.pull_request.number || github.event.issue.number }}
+          review-event: comment
+          min-severity: ${{ inputs.min-severity }}
+          fail-on: ${{ inputs.fail-on }}

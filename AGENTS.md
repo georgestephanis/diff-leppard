@@ -46,7 +46,7 @@ It can also post the result back to the PR as a GitHub review with inline commen
 | `action.yml`, `action/run.sh` | Composite GitHub Action; runs `dist/cli.js` directly (no install or build) | – |
 | `.pre-commit-hooks.yaml` | pre-commit hooks (`diff-leppard` = language node, `diff-leppard-system` = PATH); both run `diff-leppard hook` | – |
 | `skills/diff-leppard/SKILL.md`, `.claude-plugin/` | Claude Code skill + plugin/marketplace manifests (`claude plugin validate .`) | – |
-| `examples/workflows/` | Copy-paste workflow for other repos | – |
+| `examples/workflows/` | Copy-paste workflow for other repos, and a reusable (`workflow_call`) one for orgs (see `docs/ORG-ROLLOUT.md`) | – |
 | `.github/workflows/release.yml`, `scripts/release-notes.sh` | Tag → draft release with assets; publish → npm / Open VSX / VS Code Marketplace / gh extension repo / move `vN` tag. See `docs/RELEASING.md` | – |
 | `gh-diff-leppard/standalone/` | Templates for the generated `georgestephanis/gh-diff-leppard` repo (wrapper pinned to the release via `npx diff-leppard@X.Y.Z`) | – |
 | `plugin/`, `lua/diff-leppard/`, `doc/` | Neovim plugin (Lua, 0.10+): runs the CLI with `-f json`, shows findings as diagnostics + quickfix. Lives at the repo root so plugin managers can install the repo directly | – |
