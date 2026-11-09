@@ -36,8 +36,10 @@ if [[ -f "$RUNNER_TEMP/diff-leppard.json" ]]; then
     require("fs").appendFileSync(process.env.GITHUB_OUTPUT, `findings=${r.findings.length}\nblocking=${blocking}\n`);
     for (const f of r.findings) {
       const lvl = f.severity === "critical" || f.severity === "major" ? "warning" : "notice";
+      // Workflow-command escaping: data needs % CR LF; properties additionally need : and ,
       const esc = (s) => String(s).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
-      console.log(`::${lvl} title=${esc(`[${f.severity}] ${f.title}`)}::${esc(`${f.file}${f.line ? ":" + f.line : ""} ${f.body}`)}`);
+      const prop = (s) => esc(s).replace(/:/g, "%3A").replace(/,/g, "%2C");
+      console.log(`::${lvl} title=${prop(`[${f.severity}] ${f.title}`)}::${esc(`${f.file}${f.line ? ":" + f.line : ""} ${f.body}`)}`);
     }
   ' "$RUNNER_TEMP/diff-leppard.json"
 fi

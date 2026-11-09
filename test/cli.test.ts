@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
-import { loadConfig, merge } from '../src/config';
+import { loadConfig, merge, parseJsonc } from '../src/config';
 import { renderTerminal } from '../src/format';
 
 test('merge handles prefixed and github.* keys, replaces extraBody wholesale', () => {
@@ -19,9 +19,9 @@ test('merge handles prefixed and github.* keys, replaces extraBody wholesale', (
 test('loadConfig precedence: user file < repo file < env < flags', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'diff-leppard-cfg-'));
   const user = path.join(dir, 'user.json');
-  writeFileSync(user, '{\n // comment\n "baseUrl": "http://user/v1", "model": "user-model", "apiKey": "k", "concurrency": 3,\n}');
-  writeFileSync(path.join(dir, '.diff-leppard.json'), '{"model": "repo-model", "minimumSeverity": "nit"}');
-  const { settings, sources } = await loadConfig(dir, { concurrency: 5 }, { DIFF_LEPPARD_CONFIG: user, DIFF_LEPPARD_BASE_URL: 'http://env/v1', DIFF_LEPPARD_EXTRA_HEADERS: '{"X":"1"}' });
+  writeFileSync(user, '{\n // comment\n "baseUrl": "http://user/v1", "model": "user-model", "apiKey": "k", "concurrency": 3, // trailing comment\n}');
+  const repo = { json: { model: 'repo-model', minimumSeverity: 'nit' }, source: 'repo' };
+  const { settings, sources } = await loadConfig(repo, { concurrency: 5 }, { DIFF_LEPPARD_CONFIG: user, DIFF_LEPPARD_BASE_URL: 'http://env/v1', DIFF_LEPPARD_EXTRA_HEADERS: '{"X":"1"}' });
   assert.equal(sources.length, 2);
   assert.equal(settings.baseUrl, 'http://env/v1');
   assert.equal(settings.model, 'repo-model');
@@ -29,9 +29,64 @@ test('loadConfig precedence: user file < repo file < env < flags', async () => {
   assert.equal(settings.minimumSeverity, 'nit');
   assert.equal(settings.concurrency, 5);
   assert.deepEqual(settings.extraHeaders, { X: '1' });
+});
 
-  writeFileSync(path.join(dir, '.diff-leppard.json'), '{"apiKey": "leak"}');
-  await assert.rejects(loadConfig(dir, {}, { DIFF_LEPPARD_CONFIG: user }), /must not contain apiKey/);
+test('repo config cannot redirect requests or set credentials, however the keys are spelled', async () => {
+  const env = { DIFF_LEPPARD_CONFIG: '/nonexistent' };
+  const hostile = {
+    json: {
+      baseUrl: 'https://evil/v1',
+      'diffLeppard.apiKey': 'leak',
+      'github.apiUrl': 'https://evil',
+      github: { reviewEvent: 'PENDING' },
+      extraHeaders: { X: 'y' },
+      extraBody: { messages: [] },
+      excludeGlobs: ['vendor/**'],
+    },
+    source: 'repo',
+  };
+  const { settings, warnings } = await loadConfig(hostile, {}, env);
+  assert.equal(settings.baseUrl, 'http://localhost:8000/v1');
+  assert.equal(settings.apiKey, '');
+  assert.equal(settings.github.apiUrl, 'https://api.github.com');
+  assert.equal(settings.github.reviewEvent, 'COMMENT');
+  assert.deepEqual(settings.extraHeaders, {});
+  assert.deepEqual(settings.extraBody, {});
+  assert.deepEqual(settings.excludeGlobs, ['vendor/**']);
+  assert.match(warnings[0], /ignoring baseUrl, apiKey, github\.apiUrl, github\.reviewEvent, extraHeaders, extraBody/);
+});
+
+test('settings are validated; every key is available from the environment', async () => {
+  const env = { DIFF_LEPPARD_CONFIG: '/nonexistent' };
+  await assert.rejects(loadConfig(undefined, {}, { ...env, DIFF_LEPPARD_CONCURRENCY: 'abc' }), /concurrency must be a whole number/);
+  await assert.rejects(loadConfig(undefined, { maxChunkChars: Number('x') }, env), /maxChunkChars/);
+  await assert.rejects(loadConfig(undefined, {}, { ...env, DIFF_LEPPARD_STREAM: 'maybe' }), /DIFF_LEPPARD_STREAM must be true or false/);
+  await assert.rejects(loadConfig(undefined, { baseUrl: 'file:///etc' }, env), /baseUrl must be an http/);
+  const { settings } = await loadConfig(
+    undefined,
+    {},
+    {
+      ...env,
+      DIFF_LEPPARD_STREAM: 'false',
+      DIFF_LEPPARD_TEMPERATURE: '0',
+      DIFF_LEPPARD_CONTEXT_LINES: '10',
+      DIFF_LEPPARD_EXCLUDE_GLOBS: 'a/**, b/**',
+      DIFF_LEPPARD_GITHUB_ATTRIBUTION: 'false',
+      DIFF_LEPPARD_MIN_SEVERITY: 'major',
+      DIFF_LEPPARD_TIMEOUT_SECONDS: '30',
+    },
+  );
+  assert.equal(settings.stream, false);
+  assert.equal(settings.temperature, 0);
+  assert.equal(settings.contextLines, 10);
+  assert.deepEqual(settings.excludeGlobs, ['a/**', 'b/**']);
+  assert.equal(settings.github.attribution, false);
+  assert.equal(settings.minimumSeverity, 'major');
+  assert.equal(settings.requestTimeoutSeconds, 30);
+});
+
+test('parseJsonc leaves string contents alone', () => {
+  assert.deepEqual(parseJsonc('{"a": "f(x, ) // not a comment", /* c */ "b": [1, 2,],}'), { a: 'f(x, ) // not a comment', b: [1, 2] });
 });
 
 test('renderTerminal without color', () => {
@@ -61,6 +116,8 @@ test('CLI reviews local changes against a mock server and honours --fail-on', as
   git('add', '.');
   git('commit', '-qm', 'i');
   writeFileSync(path.join(repo, 'a.js'), 'x\ny\n');
+  git('config', 'diff.mnemonicPrefix', 'true'); // must not change reported paths
+  symlinkSync('/etc/hosts', path.join(repo, 'link'));
 
   const server = spawn(process.execPath, [path.join(__dirname, '../../test/fixtures/mock-openai.js'), '8766']);
   await new Promise((r) => server.stdout.once('data', r));
@@ -79,10 +136,12 @@ test('CLI reviews local changes against a mock server and honours --fail-on', as
     const r = JSON.parse(json.out);
     assert.equal(r.model, 'mock-model');
     assert.deepEqual(r.findings.map((f: { file: string; line: number }) => [f.file, f.line]), [['a.js', 2]]);
+    assert.ok(r.skippedFiles.some((x: { path: string; reason: string }) => x.path === 'link' && x.reason === 'symlink'));
     assert.equal((await run(['local', '-q', '--fail-on', 'minor'])).code, 1);
     assert.equal((await run(['local', '-q', '--fail-on', 'major'])).code, 0);
     const md = await run(['local', '-q', '-f', 'markdown']);
     assert.match(md.out, /^# Review of uncommitted changes/);
+    assert.equal((await run(['local', '-q', '--concurrency', 'abc'])).code, 2);
   } finally {
     server.kill();
   }

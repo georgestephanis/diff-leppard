@@ -32,6 +32,10 @@ before(async () => {
         return res.end(JSON.stringify({ models: [{ name: 'qwen2.5-coder:7b' }] }));
       }
       if (req.url === '/v1/chat/completions') {
+        if (json.model === 'broken') {
+          res.statusCode = 500;
+          return res.end(JSON.stringify({ error: { message: 'Internal error, see logs for more information' } }));
+        }
         if (json.model === 'strict' && json.response_format) {
           res.statusCode = 400;
           return res.end(JSON.stringify({ error: { message: "response_format is not supported" } }));
@@ -163,4 +167,11 @@ test('extraBody is merged into OpenAI and Ollama requests', async () => {
   const b = requests.at(-1).body;
   assert.equal(b.think, false);
   assert.deepEqual([b.options.top_k, b.options.num_ctx], [5, 8192]);
+});
+
+test('generic server errors do not switch off structured output', async () => {
+  const c = new LlmClient(cfg({ model: 'broken' }));
+  const before = requests.length;
+  await assert.rejects(c.chat([{ role: 'user', content: 'x' }]), /500/);
+  assert.equal(requests.length - before, 1, 'no retry without response_format');
 });

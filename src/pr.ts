@@ -18,8 +18,10 @@ export async function loadPullRequest(
   number: number,
   instructionsFile: string | undefined,
   log: Logger = nullLogger,
+  /** Already-fetched PR metadata, to avoid fetching it twice. */
+  prefetched?: PullRequestInfo,
 ): Promise<LoadedPullRequest> {
-  const pr = await gh.getPull(repo, number);
+  const pr = prefetched ?? (await gh.getPull(repo, number));
   const { files, skipped } = await gh.getPullFiles(repo, number);
   let repoInstructions: string | undefined;
   if (instructionsFile) {

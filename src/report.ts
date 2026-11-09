@@ -1,4 +1,5 @@
 import * as path from 'path';
+import { fence } from './markdown';
 import { ReviewResult, Severity } from './types';
 
 const ICON: Record<Severity, string> = { critical: '🔴', major: '🟠', minor: '🟡', nit: '⚪' };
@@ -13,12 +14,6 @@ export interface ReportMeta {
   /** When set (PR reviews), file references link to the PR's files on GitHub. */
   blobBaseUrl?: string;
   postedUrl?: string;
-}
-
-function fence(code: string): string {
-  const longest = Math.max(2, ...(code.match(/`+/g) ?? []).map((s) => s.length));
-  const f = '`'.repeat(longest + 1);
-  return `${f}\n${code.replace(/\n$/, '')}\n${f}`;
 }
 
 function link(file: string, line: number | undefined, meta: ReportMeta): string {

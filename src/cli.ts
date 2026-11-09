@@ -5,17 +5,17 @@
  *   diff-leppard local
  *   gh diff-leppard 123          (via the gh extension in ./gh-diff-leppard)
  */
-import { execFile } from 'child_process';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as readline from 'readline/promises';
 import { parseArgs } from 'util';
-import { CliSettings, loadConfig, REPO_CONFIG_FILE, userConfigPath } from './config';
+import { CliSettings, loadConfig, parseJsonc, readRepoConfig, REPO_CONFIG_FILE, REPO_CONFIG_KEYS, RepoConfigInput, userConfigPath } from './config';
 import { makeExcluder } from './diff';
 import { renderTerminal } from './format';
-import { getLocalDiff, getRemotes, getRepoRoot } from './git';
-import { GitHubClient, parsePrReference, parseRemoteUrl, postReview, RepoRef, ReviewEventSetting, webHostFromApiUrl } from './github';
-import { LlmClient } from './llm';
+import { ghExec, githubRemotes, githubTokenFor } from './gh';
+import { getLocalDiff, getRepoRoot, readRepoFile } from './git';
+import { GitHubClient, parsePrReference, postReview, RepoRef, ReviewEventSetting, webHostFromApiUrl } from './github';
+import { healthCheck, LlmClient, LlmConfig, LlmError } from './llm';
 import { loadPullRequest } from './pr';
 import { renderMarkdownReport } from './report';
 import { CancelledError, runReview } from './review';
@@ -35,7 +35,7 @@ Usage:
   As a gh extension:  gh diff-leppard [<pr>] [options]   (same options; "gh diff-leppard local" for local changes)
 
 Posting (PR reviews):
-      --post                Post the review as a comment review
+      --post                Post the review (as github.reviewEvent from config; default COMMENT)
       --request-changes     Post; request changes if there are critical/major findings
       --draft               Create a pending (draft) review you can edit and submit on GitHub
       --no-prompt           Never ask whether to post (default: ask when running in a terminal)
@@ -69,67 +69,32 @@ Other:
 
 Config files (JSON, same keys as the VS Code settings without the "diffLeppard." prefix):
   ${userConfigPath()}   (user; may contain apiKey)
-  <repo>/${REPO_CONFIG_FILE}   (per repo; must not contain apiKey)
-Environment: DIFF_LEPPARD_BASE_URL, DIFF_LEPPARD_MODEL, DIFF_LEPPARD_PROVIDER, DIFF_LEPPARD_API_KEY, DIFF_LEPPARD_EXTRA_BODY, DIFF_LEPPARD_EXTRA_HEADERS (JSON),
-  DIFF_LEPPARD_JSON_MODE, DIFF_LEPPARD_MIN_SEVERITY, DIFF_LEPPARD_MAX_CHUNK_CHARS, DIFF_LEPPARD_MAX_OUTPUT_TOKENS, DIFF_LEPPARD_TIMEOUT_SECONDS, DIFF_LEPPARD_CONCURRENCY,
-  DIFF_LEPPARD_EXTRA_INSTRUCTIONS, DIFF_LEPPARD_GITHUB_API_URL, DIFF_LEPPARD_CONFIG. GitHub token: GH_TOKEN / GITHUB_TOKEN, else \`gh auth token\`.
+  <repo>/${REPO_CONFIG_FILE}   (per repo; only ${REPO_CONFIG_KEYS.join(', ')}.
+      For PR reviews it is read from the PR's base branch, never from the PR itself.)
+Environment: every setting as DIFF_LEPPARD_<UPPER_SNAKE_KEY>, e.g. DIFF_LEPPARD_BASE_URL, DIFF_LEPPARD_MODEL, DIFF_LEPPARD_API_KEY,
+  DIFF_LEPPARD_EXTRA_BODY (JSON), DIFF_LEPPARD_STREAM=false, DIFF_LEPPARD_GITHUB_REVIEW_EVENT. Also DIFF_LEPPARD_CONFIG (config path)
+  and DIFF_LEPPARD_DEBUG=1. GitHub token: GH_TOKEN / GITHUB_TOKEN for github.com, GH_ENTERPRISE_TOKEN for other hosts,
+  else \`gh auth token\`.
 
-Exit codes: 0 success · 1 findings at/above --fail-on · 2 error · 130 cancelled
+Exit codes: 0 success · 1 findings at/above --fail-on · 2 error, or the review was incomplete (some parts failed) · 130 cancelled
 `;
 
 class UsageError extends Error {}
 
-const isTTY = (s: NodeJS.WriteStream) => !!s.isTTY && !process.env.NO_COLOR && process.env.TERM !== 'dumb';
-
-function run(cmd: string, args: string[], cwd?: string): Promise<string> {
-  return new Promise((resolve, reject) =>
-    execFile(cmd, args, { cwd, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) =>
-      err ? reject(new Error(stderr.trim() || err.message)) : resolve(stdout.trim()),
-    ),
-  );
-}
-
-async function gh(args: string[], cwd?: string): Promise<string> {
-  let lastErr: Error | undefined;
-  for (const bin of [process.env.GH_PATH || 'gh', '/opt/homebrew/bin/gh', '/usr/local/bin/gh']) {
-    try {
-      return await run(bin, args, cwd);
-    } catch (e) {
-      lastErr = e as Error;
-      if (!/ENOENT/.test(lastErr.message)) throw lastErr;
-    }
-  }
-  throw new Error(`GitHub CLI (gh) not found: ${lastErr?.message}`);
-}
-
-async function githubToken(host: string): Promise<string> {
-  const env = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || (host !== 'github.com' ? process.env.GH_ENTERPRISE_TOKEN : undefined);
-  if (env) return env;
-  try {
-    const t = await gh(['auth', 'token', '--hostname', host]);
-    if (t) return t;
-  } catch {
-    /* fall through */
-  }
-  throw new Error(`No GitHub token. Set GH_TOKEN, or run "gh auth login --hostname ${host}".`);
-}
+/** Whether a stream is an interactive terminal (decides text vs. Markdown output and the spinner). */
+const isTTY = (s: NodeJS.WriteStream) => !!s.isTTY && process.env.TERM !== 'dumb';
+/** Whether to use ANSI colors (https://no-color.org: NO_COLOR disables color only). */
+const useColor = (s: NodeJS.WriteStream) => isTTY(s) && !process.env.NO_COLOR;
 
 async function defaultRepo(cwd: string, root: string | undefined, host: string): Promise<RepoRef | undefined> {
   try {
-    const nwo = await gh(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], cwd);
+    const nwo = await ghExec(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], cwd);
     const m = /^([^/]+)\/([^/]+)$/.exec(nwo);
     if (m) return { owner: m[1], repo: m[2] };
   } catch {
     /* no gh, or not a GitHub repo for gh */
   }
-  if (!root) return undefined;
-  const remotes = await getRemotes(root);
-  const rank = (n: string) => (n === 'upstream' ? 0 : n === 'origin' ? 1 : 2);
-  for (const r of remotes.sort((a, b) => rank(a.name) - rank(b.name))) {
-    const ref = parseRemoteUrl(r.url, host);
-    if (ref) return ref;
-  }
-  return undefined;
+  return (await githubRemotes(root, host))[0]?.repo;
 }
 
 function makeLogger(verbose: boolean, quiet: boolean, progress: Progress): Logger {
@@ -178,7 +143,7 @@ class Progress {
 }
 
 async function makeLlm(s: CliSettings, log: Logger): Promise<LlmClient> {
-  const cfg = { ...(await llmBase(s)), model: s.model };
+  const cfg = { ...llmBase(s), model: s.model };
   if (!cfg.model) {
     const models = await new LlmClient(cfg, log).listModels();
     if (models.length !== 1) {
@@ -194,11 +159,11 @@ async function makeLlm(s: CliSettings, log: Logger): Promise<LlmClient> {
   return new LlmClient(cfg, log);
 }
 
-async function askToPost(label: string): Promise<ReviewEventSetting | undefined> {
+async function askToPost(label: string, configured: ReviewEventSetting): Promise<ReviewEventSetting | undefined> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
   try {
     const a = (await rl.question(`Post this review to ${label}? [y]es / [d]raft / [r]equest changes / [N]o: `)).trim().toLowerCase();
-    if (a === 'y' || a === 'yes') return 'COMMENT';
+    if (a === 'y' || a === 'yes') return configured === 'PENDING' ? 'COMMENT' : configured;
     if (a === 'd' || a === 'draft') return 'PENDING';
     if (a === 'r') return 'REQUEST_CHANGES_IF_BLOCKING';
     return undefined;
@@ -276,8 +241,8 @@ export async function main(argv: string[]): Promise<number> {
     apiKey: o['api-key'],
     jsonMode: o['json-mode'],
     stream: o['no-stream'] ? false : undefined,
-    maxChunkChars: o['max-chunk-chars'] ? Number(o['max-chunk-chars']) : undefined,
-    concurrency: o.concurrency ? Number(o.concurrency) : undefined,
+    maxChunkChars: o['max-chunk-chars'] !== undefined ? Number(o['max-chunk-chars']) : undefined,
+    concurrency: o.concurrency !== undefined ? Number(o.concurrency) : undefined,
     minimumSeverity: o['min-severity'],
   };
   if (o['extra-body']) {
@@ -287,30 +252,41 @@ export async function main(argv: string[]): Promise<number> {
       throw new UsageError('--extra-body must be JSON');
     }
   }
-  const { settings: s, sources } = await loadConfig(root, flags);
-  if (o.header?.length) {
-    s.extraHeaders = { ...s.extraHeaders };
-    for (const h of o.header) {
-      const i = h.indexOf(':');
-      if (i < 1) throw new UsageError(`--header must look like "Name: value" (got "${h}")`);
-      s.extraHeaders[h.slice(0, i).trim()] = h.slice(i + 1).trim();
-    }
+  const headers: Record<string, string> = {};
+  for (const h of o.header ?? []) {
+    const i = h.indexOf(':');
+    if (i < 1) throw new UsageError(`--header must look like "Name: value" (got "${h}")`);
+    headers[h.slice(0, i).trim()] = h.slice(i + 1).trim();
   }
+  const configure = async (repo: RepoConfigInput | undefined) => {
+    let loaded;
+    try {
+      loaded = await loadConfig(repo, flags);
+    } catch (e) {
+      throw new UsageError((e as Error).message);
+    }
+    if (Object.keys(headers).length) loaded.settings.extraHeaders = { ...loaded.settings.extraHeaders, ...headers };
+    return loaded;
+  };
+  // PR reviews take repo config from the PR's base branch (below); local reviews from the working tree.
+  const isPr = !['local', 'staged', 'models', 'test', 'config'].includes(command);
+  let { settings: s, sources, warnings } = await configure(isPr ? undefined : await readRepoConfig(root));
 
   const progress = new Progress(!o.quiet, isTTY(process.stderr));
   const log = makeLogger(!!o.verbose, !!o.quiet, progress);
   for (const src of sources) log.info(`config: ${src}`);
+  for (const w of warnings) log.warn(w);
 
   if (command === 'config') {
     const redacted = JSON.parse(JSON.stringify(s));
     if (redacted.apiKey) redacted.apiKey = '***';
-    for (const k of Object.keys(redacted.extraHeaders ?? {})) if (/auth|key|token/i.test(k)) redacted.extraHeaders[k] = '***';
+    for (const k of Object.keys(redacted.extraHeaders ?? {})) redacted.extraHeaders[k] = '***';
     process.stdout.write(`# sources: ${sources.length ? sources.join(', ') : '(defaults only)'}\n${JSON.stringify(redacted, null, 2)}\n`);
     return 0;
   }
 
   if (command === 'models') {
-    const models = await new LlmClient({ ...(await llmBase(s)), model: s.model }, log).listModels();
+    const models = await new LlmClient({ ...llmBase(s), model: s.model }, log).listModels();
     process.stdout.write(models.join('\n') + '\n');
     return 0;
   }
@@ -325,20 +301,24 @@ export async function main(argv: string[]): Promise<number> {
     ac.abort();
   });
 
+  const cancelled = () => {
+    progress.clear();
+    process.stderr.write('Cancelled.\n');
+    return 130;
+  };
+
   if (command === 'test') {
     progress.update(`Connecting to ${s.baseUrl}…`);
-    const llm = await makeLlm(s, log);
-    const t0 = Date.now();
-    const r = await llm.chat(
-      [
-        { role: 'system', content: 'You are a health check. Respond with JSON only.' },
-        { role: 'user', content: 'Respond with exactly {"ok": true}' },
-      ],
-      { signal: ac.signal, schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] } },
-    );
-    progress.clear();
-    process.stdout.write(`✓ ${llm.model} at ${s.baseUrl} replied in ${((Date.now() - t0) / 1000).toFixed(1)}s: ${r.content.trim().slice(0, 200)}\n`);
-    return 0;
+    try {
+      const llm = await makeLlm(s, log);
+      const r = await healthCheck(llm, ac.signal);
+      progress.clear();
+      process.stdout.write(`✓ ${llm.model} at ${s.baseUrl} replied in ${(r.ms / 1000).toFixed(1)}s: ${r.content.trim().slice(0, 200) || '(empty reply)'}\n`);
+      return 0;
+    } catch (e) {
+      if (ac.signal.aborted) return cancelled();
+      throw e;
+    }
   }
 
   const failOn = o['fail-on'] as Severity | undefined;
@@ -378,13 +358,13 @@ export async function main(argv: string[]): Promise<number> {
         process.stderr.write(`No ${what} in ${path.basename(root)}.\n`);
         return 0;
       }
-      let repoInstructions: string | undefined;
-      if (s.instructionsFile) repoInstructions = await fs.readFile(path.join(root, s.instructionsFile), 'utf8').catch(() => undefined);
+      const repoInstructions = s.instructionsFile ? await readRepoFile(root, s.instructionsFile) : undefined;
+      if (repoInstructions) log.info(`Using review guidelines from ${s.instructionsFile}`);
       const llm = await makeLlm(s, log);
       result = await runReview(diff.files, {
         ...reviewOpts,
         llm,
-        context: { extraInstructions: s.extraInstructions, repoInstructions: repoInstructions?.slice(0, 8000) },
+        context: { extraInstructions: s.extraInstructions, repoInstructions },
         preSkipped: diff.skipped,
       });
       title = `Review of ${what} — ${path.basename(root)}`;
@@ -401,14 +381,34 @@ export async function main(argv: string[]): Promise<number> {
         if (!ref) throw new UsageError(`Can't tell which PR "${arg}" is. Use a number inside a GitHub repo checkout, owner/repo#123, a PR URL, or --repo.`);
       } else {
         progress.update('Finding the PR for the current branch…');
-        const url = await gh(['pr', 'view', '--json', 'url', '-q', '.url'], cwd).catch(() => '');
+        const url = await ghExec(['pr', 'view', '--json', 'url', '-q', '.url'], cwd).catch(() => '');
         ref = url ? parsePrReference(url, host) : undefined;
         if (!ref) throw new UsageError('No PR given and no PR found for the current branch. Pass a PR number or URL.');
       }
       const label = `${ref.repo.owner}/${ref.repo.repo}#${ref.number}`;
       progress.update(`Fetching ${label}…`);
-      const client = new GitHubClient(s.github.apiUrl, await githubToken(host), log);
-      const loaded = await loadPullRequest(client, ref.repo, ref.number, s.instructionsFile, log);
+      const client = new GitHubClient(s.github.apiUrl, await githubTokenFor(host), log);
+      const pr0 = await client.getPull(ref.repo, ref.number);
+      // Repo config from the base branch: a PR can't change how it is itself reviewed.
+      const repoCfgText = await client.getFileContent(ref.repo, REPO_CONFIG_FILE, pr0.baseSha).catch(() => undefined);
+      if (repoCfgText !== undefined) {
+        let json: unknown;
+        try {
+          json = parseJsonc(repoCfgText);
+        } catch (e) {
+          throw new UsageError(`Could not parse ${REPO_CONFIG_FILE} on ${pr0.baseRef}: ${(e as Error).message}`);
+        }
+        if (json && typeof json === 'object' && !Array.isArray(json)) {
+          const source = `${ref.repo.owner}/${ref.repo.repo}@${pr0.baseRef}:${REPO_CONFIG_FILE}`;
+          ({ settings: s, sources, warnings } = await configure({ json: json as Record<string, unknown>, source }));
+          log.info(`config: ${source}`);
+          for (const w of warnings) log.warn(w);
+          reviewOpts.maxChunkChars = s.maxChunkChars;
+          reviewOpts.minimumSeverity = s.minimumSeverity;
+          reviewOpts.exclude = makeExcluder(s.excludeGlobs);
+        }
+      }
+      const loaded = await loadPullRequest(client, ref.repo, ref.number, s.instructionsFile, log, pr0);
       const llm = await makeLlm(s, log);
       result = await runReview(loaded.files, {
         ...reviewOpts,
@@ -427,11 +427,7 @@ export async function main(argv: string[]): Promise<number> {
       posting = { client, repo: ref.repo, pr, label };
     }
   } catch (e) {
-    if (e instanceof CancelledError || ac.signal.aborted) {
-      progress.clear();
-      process.stderr.write('Cancelled.\n');
-      return 130;
-    }
+    if (e instanceof CancelledError || ac.signal.aborted) return cancelled();
     throw e;
   }
   progress.clear();
@@ -439,7 +435,7 @@ export async function main(argv: string[]): Promise<number> {
   // Output
   if (format === 'json') process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   else if (format === 'markdown') process.stdout.write(markdown());
-  else process.stdout.write(renderTerminal(result, { color: isTTY(process.stdout), title }));
+  else process.stdout.write(renderTerminal(result, { color: useColor(process.stdout), title }));
   if (o.output) {
     await fs.writeFile(o.output, o.output.endsWith('.json') ? JSON.stringify(result, null, 2) : markdown());
     log.info(`wrote ${o.output}`);
@@ -447,23 +443,32 @@ export async function main(argv: string[]): Promise<number> {
 
   // Posting
   if (posting) {
-    let event: ReviewEventSetting | undefined = o.draft ? 'PENDING' : o['request-changes'] ? 'REQUEST_CHANGES_IF_BLOCKING' : o.post ? 'COMMENT' : undefined;
-    if (!event && !o['no-prompt'] && process.stdin.isTTY && process.stderr.isTTY) event = await askToPost(posting.label);
+    let event: ReviewEventSetting | undefined = o.draft
+      ? 'PENDING'
+      : o['request-changes']
+        ? 'REQUEST_CHANGES_IF_BLOCKING'
+        : o.post
+          ? s.github.reviewEvent
+          : undefined;
+    if (!event && !o['no-prompt'] && process.stdin.isTTY && process.stderr.isTTY) event = await askToPost(posting.label, s.github.reviewEvent);
     if (event) {
       progress.update('Posting review…');
-      const r = await postReview(posting.client, posting.repo, posting.pr, result, { event, suggestionBlocks: s.github.suggestionBlocks }, log);
+      const r = await postReview(posting.client, posting.repo, posting.pr, result, { event, suggestionBlocks: s.github.suggestionBlocks, attribution: s.github.attribution }, log);
       progress.clear();
       for (const n of r.notes) process.stderr.write(`note: ${n}\n`);
       process.stderr.write(`${event === 'PENDING' ? 'Pending review created' : 'Review posted'} (${r.inlineCount} inline comment(s)): ${r.url}\n`);
     }
   }
 
-  if (result.errors.length && !result.findings.length && result.chunkCount === result.errors.length) return 2;
+  if (result.errors.length) {
+    process.stderr.write(`error: review incomplete: ${result.errors.length} of ${result.chunkCount} part(s) failed (see above).\n`);
+    return 2;
+  }
   if (failOn && result.findings.some((f) => severityRank(f.severity) <= severityRank(failOn))) return 1;
   return 0;
 }
 
-async function llmBase(s: CliSettings) {
+function llmBase(s: CliSettings): Omit<LlmConfig, 'model'> {
   return {
     provider: s.provider,
     baseUrl: s.baseUrl,
@@ -479,13 +484,16 @@ async function llmBase(s: CliSettings) {
   };
 }
 
-if (require.main === module) {
-  main(process.argv.slice(2)).then(
+/** Run the CLI and exit the process with its status code. Used by bin/diff-leppard.js and `node out/src/cli.js`. */
+export function run(argv: string[] = process.argv.slice(2)): void {
+  main(argv).then(
     (code) => process.exit(code),
     (e) => {
       process.stderr.write(`${isTTY(process.stderr) ? '\r\x1b[K' : ''}error: ${(e as Error).message}\n`);
       if (e instanceof UsageError || (e as { code?: string }).code?.startsWith?.('ERR_PARSE_ARGS')) process.stderr.write('Run with --help for usage.\n');
-      process.exit(2);
+      process.exit(e instanceof LlmError && e.message === 'Cancelled' ? 130 : 2);
     },
   );
 }
+
+if (require.main === module) run();

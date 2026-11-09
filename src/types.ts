@@ -46,7 +46,7 @@ export interface Finding {
   suggestion?: string;
   /** True when (file, line[, endLine]) maps onto lines that are part of the diff, i.e. can be an inline PR comment. */
   inline: boolean;
-  /** True when the model's line number was not in the diff and was snapped to a nearby diff line. */
+  /** True when the location is approximate: the line was snapped to a nearby diff line, or a multi-line range was dropped. */
   lineAdjusted?: boolean;
 }
 

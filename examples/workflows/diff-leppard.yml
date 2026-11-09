@@ -36,7 +36,11 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: diff-leppard-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+  # One review at a time per PR. Comments that aren't "/review" get their own group, so a stray
+  # "thanks!" (or a bot comment) can't cancel a review that's in progress.
+  group: >-
+    diff-leppard-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}-${{
+    (github.event_name == 'issue_comment' && !startsWith(github.event.comment.body, '/review')) && github.event.comment.id || 'review' }}
   cancel-in-progress: true
 
 jobs:

@@ -3,11 +3,11 @@
 # Reviews GitHub PRs (or local changes) with your self-hosted LLM via the diff-leppard CLI.
 #
 # Install from a clone of this repo:   npm install && cd gh-diff-leppard && gh extension install .
-# Or put `diff-leppard` on PATH:  npm install -g github:georgestephanis/diff-leppard
+# Set DIFF_LEPPARD_BIN to use a specific CLI build. Or put `diff-leppard` on PATH:  npm install -g github:georgestephanis/diff-leppard
 set -euo pipefail
 
-if [[ -n "${LOCAL_CODE_REVIEW_BIN:-}" ]]; then
-  exec "$LOCAL_CODE_REVIEW_BIN" "$@"
+if [[ -n "${DIFF_LEPPARD_BIN:-}" ]]; then
+  exec "$DIFF_LEPPARD_BIN" "$@"
 fi
 
 # Resolve this script's real location (gh installs local extensions as a symlink).
