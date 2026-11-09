@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **MCP server: `diff-leppard mcp`.** Agents such as Cursor, Copilot, Claude Desktop and Claude Code can ask your model for a review with three tools: `review_local_changes`, `review_pull_request` and `check_model_server`. It is read-only (it never posts to GitHub), runs reviews one at a time with progress and cancellation, and has no dependencies.
+- **Org rollout guide** ([docs/ORG-ROLLOUT.md](docs/ORG-ROLLOUT.md)): org secrets, a workflow template, a new [reusable workflow](examples/workflows/diff-leppard-reusable.yml) that keeps settings in one place, and workflows required by org rulesets, with the fork-PR and secret caveats.
 - **Git refs that look like options are rejected** (`--base`, `--range`), since agents can now supply them.
 - **Neovim plugin.** The repo is also a Neovim plugin (0.10+): `:DiffLeppard`, `:DiffLeppardStaged` and `:DiffLeppardPR` run the CLI in the background and show findings as diagnostics and in the quickfix list. It uses the CLI's config, so there are no settings to duplicate. `:checkhealth diff-leppard` checks the setup. Install with lazy.nvim: `{ "georgestephanis/diff-leppard", opts = {} }`.
 
