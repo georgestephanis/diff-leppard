@@ -12,6 +12,7 @@ It reviews **uncommitted or staged changes** or a **GitHub pull request**. It ca
 | ⌨️ **CLI**: `diff-leppard` | Terminals, scripts, pre-commit hooks, CI | [↓](#command-line) |
 | 🐙 **`gh` extension**: `gh diff-leppard` | `gh diff-leppard 123 --post` from any checkout | [↓](#gh-extension) |
 | 🤖 **GitHub Action** | Automatic reviews on PRs in any repo, or on demand with `/review` | [↓](#github-action) |
+| 👀 **`diff-leppard watch`** | Automatic draft reviews for every PR that requests your review, in any repo, from your own machine | [↓](#watch-automatic-reviews-across-all-your-repos) |
 | 🪝 **pre-commit hook** | Review staged changes before commit, or pushed commits before push | [↓](#pre-commit) |
 | ✳️ **Claude Code plugin** | Claude sets up and runs Diff Leppard for you, and gets a second opinion from your model on its own work | [↓](#claude-code-plugin) |
 
@@ -229,6 +230,40 @@ Things to know:
   - expose the server over HTTPS behind an API key or an auth proxy (put proxy headers in `extra-headers` from secrets).
 - **Fork PRs don't get secrets** on `pull_request` events. The example skips them; a maintainer can `/review` instead. The action never checks out or runs PR code. It reads the diff through the API, and the workflow only needs `contents: read` and `pull-requests: write`.
 - **Inputs:** `base-url`, `model`, `api-key`, `provider`, `extra-headers`, `extra-body`, `json-mode`, `review-event`, `attribution`, `min-severity`, `fail-on`, `max-chunk-chars`, `max-output-tokens`, `concurrency`, `timeout-seconds`, `extra-instructions`, `pr-number`, `repository`, `github-token`. See [`action.yml`](action.yml).
+
+## watch: automatic reviews across all your repos
+
+`diff-leppard watch` runs on your machine, ideally next to your model server. It asks GitHub for open PRs that **request your review**, in any repo you can access, with no per-repo setup. It reviews each one with your model and leaves a **pending (draft) review** for you to edit and submit as yourself. Each PR is reviewed once per commit, and it only makes outbound calls to GitHub, so your model server never has to be reachable from the internet.
+
+```bash
+diff-leppard watch --dry-run     # see what it would review; no model calls, nothing posted
+diff-leppard watch --once        # one pass (for cron, systemd timers, launchd)
+diff-leppard watch               # keep checking every 5 minutes
+```
+
+Settings go in a `watch` block in `~/.config/diff-leppard/config.json`. They're user-only; repo config can't set them.
+
+```jsonc
+"watch": {
+  "event": "PENDING",            // drafts you submit yourself; or "COMMENT" / "REQUEST_CHANGES_IF_BLOCKING"
+  "reviewRequests": "user",      // "user" = asked of you personally, "team" = also your teams, "off"
+  "ownPullRequests": false,      // also review PRs you open
+  "query": "",                   // extra PRs by GitHub search, e.g. "org:acme label:diff-leppard"
+  "repos": [], "excludeRepos": ["some-org/*"],
+  "rereviewOnPush": false,       // review again after new commits
+  "skipDrafts": true,
+  "maxPerRun": 5,                // cap reviews per check; the rest wait for the next one
+  "intervalMinutes": 5
+}
+```
+
+A few things to know:
+
+- **State:** reviewed PRs are recorded in `~/.local/state/diff-leppard/watch.json`. A lock file prevents overlapping runs.
+- **Failures:** a failed review is retried up to 3 times per commit.
+- **Pending reviews:** if you already have a pending review on a PR, it's skipped, because GitHub allows only one pending review per person.
+
+To keep it running, use the [systemd user service](docs/watch/diff-leppard-watch.service) on Linux or the [launchd agent](docs/watch/me.diffleppard.watch.plist) on macOS. Both include install instructions.
 
 ## pre-commit
 

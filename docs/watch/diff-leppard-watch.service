@@ -1,0 +1,27 @@
+# systemd user service for `diff-leppard watch` (Linux).
+#
+#   mkdir -p ~/.config/systemd/user ~/.config/diff-leppard
+#   cp diff-leppard-watch.service ~/.config/systemd/user/
+#   # GitHub token for headless use (gh's keyring may not be available to services):
+#   printf 'GH_TOKEN=%s\n' "$(gh auth token)" > ~/.config/diff-leppard/watch.env && chmod 600 ~/.config/diff-leppard/watch.env
+#   systemctl --user daemon-reload && systemctl --user enable --now diff-leppard-watch
+#   loginctl enable-linger "$USER"     # keep running while you're logged out
+#   journalctl --user -u diff-leppard-watch -f
+#
+# Model server and watch settings come from ~/.config/diff-leppard/config.json.
+
+[Unit]
+Description=Diff Leppard: draft reviews for PRs that request my review
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/diff-leppard/watch.env
+# Use the absolute path from `command -v diff-leppard` if it isn't on the service's PATH (e.g. nvm installs).
+ExecStart=/usr/bin/env diff-leppard watch
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=default.target

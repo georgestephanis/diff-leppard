@@ -14,9 +14,10 @@ import { makeExcluder } from './diff';
 import { renderTerminal } from './format';
 import { ghExec, githubRemotes, githubTokenFor } from './gh';
 import { getLocalDiff, getRepoRoot, git as gitText, readRepoFile } from './git';
-import { GitHubClient, parsePrReference, postReview, RepoRef, ReviewEventSetting, webHostFromApiUrl } from './github';
+import { GitHubClient, parsePrReference, postReview, PullRequestInfo, RepoRef, ReviewEventSetting, webHostFromApiUrl } from './github';
 import { healthCheck, LlmClient, LlmConfig, LlmError, resolveChunkChars } from './llm';
-import { loadPullRequest } from './pr';
+import { llmBase, makeLlm, reviewPullRequest } from './flow';
+import { acquireLock, defaultStateFile, parseInterval, watchOnce } from './watch';
 import { renderMarkdownReport } from './report';
 import { CancelledError, runReview } from './review';
 import { Logger, ReviewResult, Severity, SEVERITIES, severityRank } from './types';
@@ -31,6 +32,9 @@ Usage:
       branching from <ref> (committed + uncommitted, e.g. --base main); or exactly the commits a..b
       (a...b = since their merge-base).
   diff-leppard hook             For pre-commit: staged changes at pre-commit, the pushed commits at pre-push
+  diff-leppard watch [--once] [--dry-run] [--interval 5m]
+      Review open PRs that request your review, in every repo you can access, once per head commit,
+      leaving a pending (draft) review for you to edit and submit. Configure with "watch" in your config.
   diff-leppard models          List models on the configured server
   diff-leppard test            Check the server connection with a tiny request
   diff-leppard config          Show the effective configuration and where it came from
@@ -62,6 +66,13 @@ Model server (override config files):
       --max-chunk-chars <n>
       --concurrency <n>
       --min-severity <s>    critical | major | minor | nit
+
+Watch:
+      --once                Check once and exit (for cron, systemd timers, launchd)
+      --dry-run             Show which PRs would be reviewed; no model calls, nothing posted (implies --once)
+      --interval <time>     Time between checks in loop mode, e.g. 5m, 90s, 1h (default: watch.intervalMinutes)
+      --state <file>        Where reviewed PRs are recorded (default: $XDG_STATE_HOME/diff-leppard/watch.json)
+      --draft / --post / --request-changes   Override watch.event (default: draft)
 
 Other:
   -R, --repo <owner/repo>   Repository for a bare PR number (default: gh's default repo / git remotes)
@@ -161,23 +172,6 @@ class Progress {
   }
 }
 
-async function makeLlm(s: CliSettings, log: Logger): Promise<LlmClient> {
-  const cfg = { ...llmBase(s), model: s.model };
-  if (!cfg.model) {
-    const models = await new LlmClient(cfg, log).listModels();
-    if (models.length !== 1) {
-      throw new UsageError(
-        models.length
-          ? `No model configured and the server has ${models.length}: ${models.join(', ')}. Pass --model or set "model" in ${userConfigPath()}.`
-          : `The server at ${cfg.baseUrl} reported no models.`,
-      );
-    }
-    cfg.model = models[0];
-    log.info(`Using the server's only model: ${cfg.model}`);
-  }
-  return new LlmClient(cfg, log);
-}
-
 async function askToPost(label: string, configured: ReviewEventSetting): Promise<ReviewEventSetting | undefined> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
   try {
@@ -221,6 +215,10 @@ export async function main(argv: string[]): Promise<number> {
       staged: { type: 'boolean' },
       base: { type: 'string' },
       range: { type: 'string' },
+      once: { type: 'boolean' },
+      'dry-run': { type: 'boolean' },
+      interval: { type: 'string' },
+      state: { type: 'string' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean' },
     },
@@ -237,7 +235,7 @@ export async function main(argv: string[]): Promise<number> {
 
   let command = positionals[0] ?? 'pr';
   let rest = positionals.slice(1);
-  if (!['pr', 'local', 'staged', 'hook', 'models', 'test', 'config', 'help'].includes(command)) {
+  if (!['pr', 'local', 'staged', 'hook', 'watch', 'models', 'test', 'config', 'help'].includes(command)) {
     // `diff-leppard 123` / `gh diff-leppard https://…` → pr
     command = 'pr';
     rest = positionals;
@@ -300,7 +298,7 @@ export async function main(argv: string[]): Promise<number> {
     return loaded;
   };
   // PR reviews take repo config from the PR's base branch (below); local reviews from the working tree.
-  const isPr = !['local', 'models', 'test', 'config'].includes(command);
+  const isPr = !['local', 'watch', 'models', 'test', 'config'].includes(command);
   let { settings: s, sources, warnings } = await configure(isPr ? undefined : await readRepoConfig(root));
 
   const progress = new Progress(!o.quiet, isTTY(process.stderr));
@@ -352,6 +350,61 @@ export async function main(argv: string[]): Promise<number> {
     }
   }
 
+  if (command === 'watch') {
+    const host = webHostFromApiUrl(s.github.apiUrl);
+    const client = new GitHubClient(s.github.apiUrl, await githubTokenFor(host), log);
+    const stateFile = path.resolve(o.state ?? (s.watch.stateFile || defaultStateFile()));
+    const intervalMs = o.interval ? parseInterval(o.interval) : s.watch.intervalMinutes * 60_000;
+    const once = !!(o.once || o['dry-run']);
+    const event: ReviewEventSetting | undefined = o.draft ? 'PENDING' : o['request-changes'] ? 'REQUEST_CHANGES_IF_BLOCKING' : o.post ? 'COMMENT' : undefined;
+    const release = await acquireLock(stateFile);
+    if (!release) {
+      process.stderr.write(`Another diff-leppard watch is already running (lock: ${stateFile}.lock); exiting.\n`);
+      return 0;
+    }
+    const say = (line: string) => {
+      progress.clear();
+      process.stderr.write(`[${new Date().toLocaleTimeString()}] ${line}\n`);
+    };
+    if (!once) say(`watching every ${Math.round(intervalMs / 1000)}s (Ctrl-C to stop); state: ${stateFile}`);
+    try {
+      for (;;) {
+        try {
+          const sum = await watchOnce({
+            client,
+            host,
+            settings: s,
+            configure,
+            event,
+            stateFile,
+            dryRun: !!o['dry-run'],
+            log,
+            say,
+            signal: ac.signal,
+            onProgress: (m) => progress.update(m),
+          });
+          const extra = [sum.skipped && `${sum.skipped} skipped`, sum.failed && `${sum.failed} failed`, sum.deferred && `${sum.deferred} left for next time`]
+            .filter(Boolean)
+            .join(', ');
+          say(`checked ${sum.candidates} open PR(s): ${sum.reviewed} ${o['dry-run'] ? 'to review' : 'reviewed'}${extra ? `, ${extra}` : ''}`);
+        } catch (e) {
+          if (ac.signal.aborted) break;
+          if (once) throw e;
+          say(`check failed: ${(e as Error).message} (retrying next time)`);
+        }
+        if (once || ac.signal.aborted) break;
+        await new Promise<void>((resolve) => {
+          const t = setTimeout(resolve, intervalMs);
+          ac.signal.addEventListener('abort', () => (clearTimeout(t), resolve()), { once: true });
+        });
+        if (ac.signal.aborted) break;
+      }
+    } finally {
+      await release();
+    }
+    return ac.signal.aborted ? cancelled() : 0;
+  }
+
   const failOn = o['fail-on'] as Severity | undefined;
   if (failOn && !SEVERITIES.includes(failOn)) throw new UsageError(`--fail-on must be one of ${SEVERITIES.join(', ')}`);
   const format = o.format ?? (isTTY(process.stdout) ? 'text' : 'markdown');
@@ -370,7 +423,7 @@ export async function main(argv: string[]): Promise<number> {
   let result: ReviewResult;
   let title: string;
   let markdown: () => string;
-  let posting: { client: GitHubClient; repo: RepoRef; pr: Awaited<ReturnType<typeof loadPullRequest>>['pr']; label: string } | undefined;
+  let posting: { client: GitHubClient; repo: RepoRef; pr: PullRequestInfo; label: string } | undefined;
 
   try {
     if (command === 'local') {
@@ -444,43 +497,20 @@ export async function main(argv: string[]): Promise<number> {
       const label = `${ref.repo.owner}/${ref.repo.repo}#${ref.number}`;
       progress.update(`Fetching ${label}…`);
       const client = new GitHubClient(s.github.apiUrl, await githubTokenFor(host), log);
-      const pr0 = await client.getPull(ref.repo, ref.number);
-      // Repo config from the base branch: a PR can't change how it is itself reviewed.
-      const repoCfgText = await client.getFileContent(ref.repo, REPO_CONFIG_FILE, pr0.baseSha).catch(() => undefined);
-      if (repoCfgText !== undefined) {
-        let json: unknown;
-        try {
-          json = parseJsonc(repoCfgText);
-        } catch (e) {
-          throw new UsageError(`Could not parse ${REPO_CONFIG_FILE} on ${pr0.baseRef}: ${(e as Error).message}`);
-        }
-        if (json && typeof json === 'object' && !Array.isArray(json)) {
-          const source = `${ref.repo.owner}/${ref.repo.repo}@${pr0.baseRef}:${REPO_CONFIG_FILE}`;
-          ({ settings: s, sources, warnings } = await configure({ json: json as Record<string, unknown>, source }));
-          log.info(`config: ${source}`);
-          for (const w of warnings) log.warn(w);
-          reviewOpts.maxChunkChars = s.maxChunkChars;
-          reviewOpts.minimumSeverity = s.minimumSeverity;
-          reviewOpts.exclude = makeExcluder(s.excludeGlobs);
-        }
-      }
-      const loaded = await loadPullRequest(client, ref.repo, ref.number, s.instructionsFile, log, pr0);
-      const llm = await makeLlm(s, log);
-      result = await runReview(loaded.files, {
-        ...reviewOpts,
-        maxChunkChars: await resolveChunkChars(llm, reviewOpts.maxChunkChars, s.maxOutputTokens, log, ac.signal),
-        llm,
-        context: { title: loaded.pr.title, description: loaded.pr.body, extraInstructions: s.extraInstructions, repoInstructions: loaded.repoInstructions },
-        preSkipped: loaded.skipped,
+      const review = await reviewPullRequest({
+        client,
+        repo: ref.repo,
+        number: ref.number,
+        host,
+        settings: s,
+        configure,
+        log,
+        signal: ac.signal,
+        onProgress: (m) => progress.update(m),
       });
-      const pr = loaded.pr;
-      title = `Review of ${label}: ${pr.title}`;
-      markdown = () =>
-        renderMarkdownReport(result, {
-          title,
-          source: `[${label}](${pr.htmlUrl}) by @${pr.author} (${pr.headRef} → ${pr.baseRef})`,
-          blobBaseUrl: `https://${host}/${ref!.repo.owner}/${ref!.repo.repo}/blob/${pr.headSha}`,
-        });
+      ({ result, title, markdown } = review);
+      s = review.settings;
+      const pr = review.pr;
       posting = { client, repo: ref.repo, pr, label };
     }
   } catch (e) {
@@ -523,22 +553,6 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (failOn && result.findings.some((f) => severityRank(f.severity) <= severityRank(failOn))) return 1;
   return 0;
-}
-
-function llmBase(s: CliSettings): Omit<LlmConfig, 'model'> {
-  return {
-    provider: s.provider,
-    baseUrl: s.baseUrl,
-    apiKey: s.apiKey || undefined,
-    temperature: s.temperature,
-    maxOutputTokens: s.maxOutputTokens,
-    jsonMode: s.jsonMode,
-    stream: s.stream,
-    timeoutMs: s.requestTimeoutSeconds * 1000,
-    ollamaNumCtx: s.ollamaNumCtx,
-    extraHeaders: s.extraHeaders,
-    extraBody: s.extraBody,
-  };
 }
 
 /** Run the CLI and exit the process with its status code. Used by bin/diff-leppard.js and `node dist/cli.js`. */

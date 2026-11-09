@@ -53,7 +53,8 @@ const gh_1 = require("./gh");
 const git_1 = require("./git");
 const github_1 = require("./github");
 const llm_1 = require("./llm");
-const pr_1 = require("./pr");
+const flow_1 = require("./flow");
+const watch_1 = require("./watch");
 const report_1 = require("./report");
 const review_1 = require("./review");
 const types_1 = require("./types");
@@ -67,6 +68,9 @@ Usage:
       branching from <ref> (committed + uncommitted, e.g. --base main); or exactly the commits a..b
       (a...b = since their merge-base).
   diff-leppard hook             For pre-commit: staged changes at pre-commit, the pushed commits at pre-push
+  diff-leppard watch [--once] [--dry-run] [--interval 5m]
+      Review open PRs that request your review, in every repo you can access, once per head commit,
+      leaving a pending (draft) review for you to edit and submit. Configure with "watch" in your config.
   diff-leppard models          List models on the configured server
   diff-leppard test            Check the server connection with a tiny request
   diff-leppard config          Show the effective configuration and where it came from
@@ -98,6 +102,13 @@ Model server (override config files):
       --max-chunk-chars <n>
       --concurrency <n>
       --min-severity <s>    critical | major | minor | nit
+
+Watch:
+      --once                Check once and exit (for cron, systemd timers, launchd)
+      --dry-run             Show which PRs would be reviewed; no model calls, nothing posted (implies --once)
+      --interval <time>     Time between checks in loop mode, e.g. 5m, 90s, 1h (default: watch.intervalMinutes)
+      --state <file>        Where reviewed PRs are recorded (default: $XDG_STATE_HOME/diff-leppard/watch.json)
+      --draft / --post / --request-changes   Override watch.event (default: draft)
 
 Other:
   -R, --repo <owner/repo>   Repository for a bare PR number (default: gh's default repo / git remotes)
@@ -202,20 +213,6 @@ class Progress {
         }
     }
 }
-async function makeLlm(s, log) {
-    const cfg = { ...llmBase(s), model: s.model };
-    if (!cfg.model) {
-        const models = await new llm_1.LlmClient(cfg, log).listModels();
-        if (models.length !== 1) {
-            throw new UsageError(models.length
-                ? `No model configured and the server has ${models.length}: ${models.join(', ')}. Pass --model or set "model" in ${(0, config_1.userConfigPath)()}.`
-                : `The server at ${cfg.baseUrl} reported no models.`);
-        }
-        cfg.model = models[0];
-        log.info(`Using the server's only model: ${cfg.model}`);
-    }
-    return new llm_1.LlmClient(cfg, log);
-}
 async function askToPost(label, configured) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
     try {
@@ -262,6 +259,10 @@ async function main(argv) {
             staged: { type: 'boolean' },
             base: { type: 'string' },
             range: { type: 'string' },
+            once: { type: 'boolean' },
+            'dry-run': { type: 'boolean' },
+            interval: { type: 'string' },
+            state: { type: 'string' },
             help: { type: 'boolean', short: 'h' },
             version: { type: 'boolean' },
         },
@@ -276,7 +277,7 @@ async function main(argv) {
     }
     let command = positionals[0] ?? 'pr';
     let rest = positionals.slice(1);
-    if (!['pr', 'local', 'staged', 'hook', 'models', 'test', 'config', 'help'].includes(command)) {
+    if (!['pr', 'local', 'staged', 'hook', 'watch', 'models', 'test', 'config', 'help'].includes(command)) {
         // `diff-leppard 123` / `gh diff-leppard https://…` → pr
         command = 'pr';
         rest = positionals;
@@ -344,7 +345,7 @@ async function main(argv) {
         return loaded;
     };
     // PR reviews take repo config from the PR's base branch (below); local reviews from the working tree.
-    const isPr = !['local', 'models', 'test', 'config'].includes(command);
+    const isPr = !['local', 'watch', 'models', 'test', 'config'].includes(command);
     let { settings: s, sources, warnings } = await configure(isPr ? undefined : await (0, config_1.readRepoConfig)(root));
     const progress = new Progress(!o.quiet, isTTY(process.stderr));
     const log = makeLogger(!!o.verbose, !!o.quiet, progress);
@@ -362,7 +363,7 @@ async function main(argv) {
         return 0;
     }
     if (command === 'models') {
-        const models = await new llm_1.LlmClient({ ...llmBase(s), model: s.model }, log).listModels();
+        const models = await new llm_1.LlmClient({ ...(0, flow_1.llmBase)(s), model: s.model }, log).listModels();
         process.stdout.write(models.join('\n') + '\n');
         return 0;
     }
@@ -384,7 +385,7 @@ async function main(argv) {
     if (command === 'test') {
         progress.update(`Connecting to ${s.baseUrl}…`);
         try {
-            const llm = await makeLlm(s, log);
+            const llm = await (0, flow_1.makeLlm)(s, log);
             const r = await (0, llm_1.healthCheck)(llm, ac.signal);
             progress.clear();
             process.stdout.write(`✓ ${llm.model} at ${s.baseUrl} replied in ${(r.ms / 1000).toFixed(1)}s: ${r.content.trim().slice(0, 200) || '(empty reply)'}\n`);
@@ -395,6 +396,67 @@ async function main(argv) {
                 return cancelled();
             throw e;
         }
+    }
+    if (command === 'watch') {
+        const host = (0, github_1.webHostFromApiUrl)(s.github.apiUrl);
+        const client = new github_1.GitHubClient(s.github.apiUrl, await (0, gh_1.githubTokenFor)(host), log);
+        const stateFile = path.resolve(o.state ?? (s.watch.stateFile || (0, watch_1.defaultStateFile)()));
+        const intervalMs = o.interval ? (0, watch_1.parseInterval)(o.interval) : s.watch.intervalMinutes * 60_000;
+        const once = !!(o.once || o['dry-run']);
+        const event = o.draft ? 'PENDING' : o['request-changes'] ? 'REQUEST_CHANGES_IF_BLOCKING' : o.post ? 'COMMENT' : undefined;
+        const release = await (0, watch_1.acquireLock)(stateFile);
+        if (!release) {
+            process.stderr.write(`Another diff-leppard watch is already running (lock: ${stateFile}.lock); exiting.\n`);
+            return 0;
+        }
+        const say = (line) => {
+            progress.clear();
+            process.stderr.write(`[${new Date().toLocaleTimeString()}] ${line}\n`);
+        };
+        if (!once)
+            say(`watching every ${Math.round(intervalMs / 1000)}s (Ctrl-C to stop); state: ${stateFile}`);
+        try {
+            for (;;) {
+                try {
+                    const sum = await (0, watch_1.watchOnce)({
+                        client,
+                        host,
+                        settings: s,
+                        configure,
+                        event,
+                        stateFile,
+                        dryRun: !!o['dry-run'],
+                        log,
+                        say,
+                        signal: ac.signal,
+                        onProgress: (m) => progress.update(m),
+                    });
+                    const extra = [sum.skipped && `${sum.skipped} skipped`, sum.failed && `${sum.failed} failed`, sum.deferred && `${sum.deferred} left for next time`]
+                        .filter(Boolean)
+                        .join(', ');
+                    say(`checked ${sum.candidates} open PR(s): ${sum.reviewed} ${o['dry-run'] ? 'to review' : 'reviewed'}${extra ? `, ${extra}` : ''}`);
+                }
+                catch (e) {
+                    if (ac.signal.aborted)
+                        break;
+                    if (once)
+                        throw e;
+                    say(`check failed: ${e.message} (retrying next time)`);
+                }
+                if (once || ac.signal.aborted)
+                    break;
+                await new Promise((resolve) => {
+                    const t = setTimeout(resolve, intervalMs);
+                    ac.signal.addEventListener('abort', () => (clearTimeout(t), resolve()), { once: true });
+                });
+                if (ac.signal.aborted)
+                    break;
+            }
+        }
+        finally {
+            await release();
+        }
+        return ac.signal.aborted ? cancelled() : 0;
     }
     const failOn = o['fail-on'];
     if (failOn && !types_1.SEVERITIES.includes(failOn))
@@ -464,7 +526,7 @@ async function main(argv) {
             const repoInstructions = s.instructionsFile ? await (0, git_1.readRepoFile)(root, s.instructionsFile) : undefined;
             if (repoInstructions)
                 log.info(`Using review guidelines from ${s.instructionsFile}`);
-            const llm = await makeLlm(s, log);
+            const llm = await (0, flow_1.makeLlm)(s, log);
             result = await (0, review_1.runReview)(diff.files, {
                 ...reviewOpts,
                 maxChunkChars: await (0, llm_1.resolveChunkChars)(llm, reviewOpts.maxChunkChars, s.maxOutputTokens, log, ac.signal),
@@ -498,44 +560,20 @@ async function main(argv) {
             const label = `${ref.repo.owner}/${ref.repo.repo}#${ref.number}`;
             progress.update(`Fetching ${label}…`);
             const client = new github_1.GitHubClient(s.github.apiUrl, await (0, gh_1.githubTokenFor)(host), log);
-            const pr0 = await client.getPull(ref.repo, ref.number);
-            // Repo config from the base branch: a PR can't change how it is itself reviewed.
-            const repoCfgText = await client.getFileContent(ref.repo, config_1.REPO_CONFIG_FILE, pr0.baseSha).catch(() => undefined);
-            if (repoCfgText !== undefined) {
-                let json;
-                try {
-                    json = (0, config_1.parseJsonc)(repoCfgText);
-                }
-                catch (e) {
-                    throw new UsageError(`Could not parse ${config_1.REPO_CONFIG_FILE} on ${pr0.baseRef}: ${e.message}`);
-                }
-                if (json && typeof json === 'object' && !Array.isArray(json)) {
-                    const source = `${ref.repo.owner}/${ref.repo.repo}@${pr0.baseRef}:${config_1.REPO_CONFIG_FILE}`;
-                    ({ settings: s, sources, warnings } = await configure({ json: json, source }));
-                    log.info(`config: ${source}`);
-                    for (const w of warnings)
-                        log.warn(w);
-                    reviewOpts.maxChunkChars = s.maxChunkChars;
-                    reviewOpts.minimumSeverity = s.minimumSeverity;
-                    reviewOpts.exclude = (0, diff_1.makeExcluder)(s.excludeGlobs);
-                }
-            }
-            const loaded = await (0, pr_1.loadPullRequest)(client, ref.repo, ref.number, s.instructionsFile, log, pr0);
-            const llm = await makeLlm(s, log);
-            result = await (0, review_1.runReview)(loaded.files, {
-                ...reviewOpts,
-                maxChunkChars: await (0, llm_1.resolveChunkChars)(llm, reviewOpts.maxChunkChars, s.maxOutputTokens, log, ac.signal),
-                llm,
-                context: { title: loaded.pr.title, description: loaded.pr.body, extraInstructions: s.extraInstructions, repoInstructions: loaded.repoInstructions },
-                preSkipped: loaded.skipped,
+            const review = await (0, flow_1.reviewPullRequest)({
+                client,
+                repo: ref.repo,
+                number: ref.number,
+                host,
+                settings: s,
+                configure,
+                log,
+                signal: ac.signal,
+                onProgress: (m) => progress.update(m),
             });
-            const pr = loaded.pr;
-            title = `Review of ${label}: ${pr.title}`;
-            markdown = () => (0, report_1.renderMarkdownReport)(result, {
-                title,
-                source: `[${label}](${pr.htmlUrl}) by @${pr.author} (${pr.headRef} → ${pr.baseRef})`,
-                blobBaseUrl: `https://${host}/${ref.repo.owner}/${ref.repo.repo}/blob/${pr.headSha}`,
-            });
+            ({ result, title, markdown } = review);
+            s = review.settings;
+            const pr = review.pr;
             posting = { client, repo: ref.repo, pr, label };
         }
     }
@@ -583,21 +621,6 @@ async function main(argv) {
     if (failOn && result.findings.some((f) => (0, types_1.severityRank)(f.severity) <= (0, types_1.severityRank)(failOn)))
         return 1;
     return 0;
-}
-function llmBase(s) {
-    return {
-        provider: s.provider,
-        baseUrl: s.baseUrl,
-        apiKey: s.apiKey || undefined,
-        temperature: s.temperature,
-        maxOutputTokens: s.maxOutputTokens,
-        jsonMode: s.jsonMode,
-        stream: s.stream,
-        timeoutMs: s.requestTimeoutSeconds * 1000,
-        ollamaNumCtx: s.ollamaNumCtx,
-        extraHeaders: s.extraHeaders,
-        extraBody: s.extraBody,
-    };
 }
 /** Run the CLI and exit the process with its status code. Used by bin/diff-leppard.js and `node dist/cli.js`. */
 function run(argv = process.argv.slice(2)) {

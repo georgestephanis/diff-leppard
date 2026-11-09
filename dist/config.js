@@ -99,6 +99,19 @@ function defaultSettings() {
         extraInstructions: '',
         instructionsFile: '.github/code-review-instructions.md',
         github: { apiUrl: 'https://api.github.com', reviewEvent: 'COMMENT', suggestionBlocks: false, attribution: true },
+        watch: {
+            intervalMinutes: 5,
+            event: 'PENDING',
+            reviewRequests: 'user',
+            ownPullRequests: false,
+            query: '',
+            repos: [],
+            excludeRepos: [],
+            rereviewOnPush: false,
+            skipDrafts: true,
+            maxPerRun: 5,
+            stateFile: '',
+        },
     };
 }
 exports.REPO_CONFIG_FILE = '.diff-leppard.json';
@@ -112,17 +125,21 @@ function isObj(v) {
     return !!v && typeof v === 'object' && !Array.isArray(v);
 }
 /** Flatten `diffLeppard.` prefixes and `github.x` dotted keys into the nested settings shape. */
+/** Setting groups that nest one level: `github.apiUrl`, `watch.repos`, … */
+const NESTED = ['github', 'watch'];
 function normalizeKeys(o) {
     const out = {};
     for (let [k, v] of Object.entries(o)) {
         if (v === undefined)
             continue;
         k = k.replace(/^diffLeppard\./, '');
-        if (k.startsWith('github.')) {
-            out.github = { ...(out.github ?? {}), [k.slice(7)]: v };
+        const dot = k.indexOf('.');
+        const group = dot > 0 ? k.slice(0, dot) : k;
+        if (dot > 0 && NESTED.includes(group)) {
+            out[group] = { ...(out[group] ?? {}), [k.slice(dot + 1)]: v };
         }
-        else if (k === 'github' && isObj(v)) {
-            out.github = { ...(out.github ?? {}), ...v };
+        else if (NESTED.includes(k) && isObj(v)) {
+            out[k] = { ...(out[k] ?? {}), ...v };
         }
         else
             out[k] = v;
@@ -218,8 +235,8 @@ function filterRepoConfig(json) {
     for (const [k, v] of Object.entries(flat)) {
         if (exports.REPO_CONFIG_KEYS.includes(k))
             allowed[k] = v;
-        else if (k === 'github' && isObj(v))
-            ignored.push(...Object.keys(v).map((g) => `github.${g}`));
+        else if (NESTED.includes(k) && isObj(v))
+            ignored.push(...Object.keys(v).map((g) => `${k}.${g}`));
         else
             ignored.push(k);
     }
@@ -261,7 +278,7 @@ function parseEnvValue(name, raw, sample) {
     }
     return raw;
 }
-/** Every setting is available as DIFF_LEPPARD_<UPPER_SNAKE_KEY> (github.* as DIFF_LEPPARD_GITHUB_<KEY>). */
+/** Every setting is available as DIFF_LEPPARD_<UPPER_SNAKE_KEY> (github.x as DIFF_LEPPARD_GITHUB_X, watch.x as DIFF_LEPPARD_WATCH_X). */
 function envSettings(env) {
     const o = {};
     if (env.GH_HOST && env.GH_HOST !== 'github.com')
@@ -276,9 +293,9 @@ function envSettings(env) {
     for (const [alias, key] of Object.entries(ENV_ALIASES))
         set(key, `DIFF_LEPPARD_${alias}`, defaults[key]);
     for (const [k, sample] of Object.entries(defaults)) {
-        if (k === 'github') {
+        if (NESTED.includes(k)) {
             for (const [g, gs] of Object.entries(sample))
-                set(`github.${g}`, `DIFF_LEPPARD_GITHUB_${upperSnake(g)}`, gs);
+                set(`${k}.${g}`, `DIFF_LEPPARD_${upperSnake(k)}_${upperSnake(g)}`, gs);
         }
         else
             set(k, `DIFF_LEPPARD_${upperSnake(k)}`, sample);
@@ -319,6 +336,21 @@ function validate(s) {
     bool('includeUntracked', s.includeUntracked);
     bool('github.suggestionBlocks', s.github.suggestionBlocks);
     bool('github.attribution', s.github.attribution);
+    const w = s.watch;
+    oneOf('watch.event', w.event, ['COMMENT', 'REQUEST_CHANGES_IF_BLOCKING', 'PENDING']);
+    oneOf('watch.reviewRequests', w.reviewRequests, ['user', 'team', 'off']);
+    for (const [k, v] of [['watch.ownPullRequests', w.ownPullRequests], ['watch.rereviewOnPush', w.rereviewOnPush], ['watch.skipDrafts', w.skipDrafts]])
+        bool(k, v);
+    if (typeof w.intervalMinutes !== 'number' || !(w.intervalMinutes >= 1))
+        throw new Error(`watch.intervalMinutes must be at least 1 (got ${JSON.stringify(w.intervalMinutes)})`);
+    if (!Number.isInteger(w.maxPerRun) || w.maxPerRun < 1)
+        throw new Error(`watch.maxPerRun must be a whole number ≥ 1 (got ${JSON.stringify(w.maxPerRun)})`);
+    for (const [k, v] of [['watch.repos', w.repos], ['watch.excludeRepos', w.excludeRepos]]) {
+        if (!Array.isArray(v) || v.some((r) => typeof r !== 'string' || !/^[\w.-]+\/([\w.-]+|\*)$/.test(r)))
+            throw new Error(`${k} must be a list of "owner/repo" or "owner/*"`);
+    }
+    if (typeof w.query !== 'string' || typeof w.stateFile !== 'string')
+        throw new Error('watch.query and watch.stateFile must be strings');
     for (const [k, v] of [['baseUrl', s.baseUrl], ['github.apiUrl', s.github.apiUrl]]) {
         try {
             const u = new URL(v);
