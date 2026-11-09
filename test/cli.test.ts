@@ -123,11 +123,12 @@ test('CLI reviews local changes against a mock server and honours --fail-on', as
   const server = spawn(process.execPath, [path.join(__dirname, '../../test/fixtures/mock-openai.js'), '8766']);
   await new Promise((r) => server.stdout.once('data', r));
   try {
-    const cli = path.join(__dirname, '../src/cli.js');
+    // Exercise the shipped artifact (dist/), not just the test build.
+    const cli = path.join(__dirname, '../../dist/cli.js');
     const env = { ...process.env, DIFF_LEPPARD_CONFIG: '/nonexistent', DIFF_LEPPARD_BASE_URL: 'http://127.0.0.1:8766/v1' };
-    const run = (args: string[]) =>
+    const run = (args: string[], extraEnv: Record<string, string> = {}) =>
       new Promise<{ code: number; out: string }>((resolve) => {
-        const p = spawn(process.execPath, [cli, ...args], { cwd: repo, env });
+        const p = spawn(process.execPath, [cli, ...args], { cwd: repo, env: { ...env, ...extraEnv } });
         let out = '';
         p.stdout.on('data', (d) => (out += d));
         p.on('close', (code) => resolve({ code: code ?? -1, out }));
@@ -143,6 +144,25 @@ test('CLI reviews local changes against a mock server and honours --fail-on', as
     const md = await run(['local', '-q', '-f', 'markdown']);
     assert.match(md.out, /^# Review of uncommitted changes/);
     assert.equal((await run(['local', '-q', '--concurrency', 'abc'])).code, 2);
+
+    // Commit ranges, merge-base mode and the pre-commit hook entry point.
+    const files = (out: string) => JSON.parse(out).findings.map((f: { file: string; line: number }) => `${f.file}:${f.line}`).sort();
+    git('add', 'a.js');
+    git('commit', '-qm', 'second');
+    const [first, second] = ['HEAD~1', 'HEAD'].map((r) => execFileSync('git', ['rev-parse', r], { cwd: repo }).toString().trim());
+    assert.deepEqual(files((await run(['local', '-q', '-f', 'json', '--range', 'HEAD~1..HEAD'])).out), ['a.js:2']);
+    writeFileSync(path.join(repo, 'b.js'), 'one\n');
+    git('add', 'b.js');
+    assert.deepEqual(files((await run(['hook', '-f', 'json'])).out), ['b.js:1'], 'hook at pre-commit: staged changes');
+    assert.deepEqual(
+      files((await run(['hook', '-f', 'json'], { PRE_COMMIT_FROM_REF: first, PRE_COMMIT_TO_REF: second })).out),
+      ['a.js:2'],
+      'hook at pre-push: the pushed commits',
+    );
+    assert.deepEqual(files((await run(['local', '-q', '-f', 'json', '--base', 'HEAD~1'])).out), ['a.js:2', 'b.js:1'], 'base: committed + staged');
+    assert.equal((await run(['hook', '--fail-on', 'minor'])).code, 1, 'hook fails the commit on findings');
+    assert.equal((await run(['local', '--staged', '--base', 'HEAD'])).code, 2, 'conflicting modes');
+    assert.equal((await run(['local', '--range', 'nope..HEAD'])).code, 2, 'unknown ref');
   } finally {
     server.kill();
   }

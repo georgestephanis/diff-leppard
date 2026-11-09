@@ -51,6 +51,10 @@ export interface LocalDiffOptions {
   /** Untracked files larger than this are skipped. */
   maxUntrackedBytes: number;
   exclude: (p: string) => boolean;
+  /** Diff from the merge-base of this ref and HEAD (e.g. `main`) instead of from HEAD: "everything on my branch". */
+  base?: string;
+  /** Diff exactly these commits (from..to); no working-tree or untracked changes. */
+  range?: { from: string; to: string };
 }
 
 export interface LocalDiff {
@@ -58,8 +62,24 @@ export interface LocalDiff {
   skipped: { path: string; reason: string }[];
 }
 
+/** True for git's all-zeros "no commit" object id (e.g. pre-push of a new branch). */
+export function isNullSha(ref: string | undefined): boolean {
+  return !!ref && /^0+$/.test(ref);
+}
+
+async function resolveRef(root: string, ref: string): Promise<string> {
+  const sha = (await git(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], true)).trim();
+  if (!sha) throw new Error(`Unknown git ref: ${ref}`);
+  return sha;
+}
+
 export async function getLocalDiff(root: string, opts: LocalDiffOptions): Promise<LocalDiff> {
-  const base = (await getHeadSha(root)) ?? EMPTY_TREE;
+  let base = (await getHeadSha(root)) ?? EMPTY_TREE;
+  if (opts.base) {
+    const mb = (await git(root, ['merge-base', await resolveRef(root, opts.base), 'HEAD'], true)).trim();
+    if (!mb) throw new Error(`No common ancestor between ${opts.base} and HEAD`);
+    base = mb;
+  }
   // Pin the output format regardless of the user's git config (diff.noprefix, diff.mnemonicPrefix, diff.relative, …).
   const common = [
     '-c', 'diff.noprefix=false',
@@ -67,11 +87,17 @@ export async function getLocalDiff(root: string, opts: LocalDiffOptions): Promis
     'diff', '--no-color', '--no-ext-diff', '--no-relative', '--src-prefix=a/', '--dst-prefix=b/',
     '--find-renames', `-U${opts.contextLines}`,
   ];
-  const args = opts.stagedOnly ? [...common, '--cached', base] : [...common, base];
+  let args: string[];
+  if (opts.range) {
+    const from = isNullSha(opts.range.from) ? EMPTY_TREE : await resolveRef(root, opts.range.from);
+    args = [...common, from, await resolveRef(root, opts.range.to)];
+  } else {
+    args = opts.stagedOnly ? [...common, '--cached', base] : [...common, base];
+  }
   const files = parseUnifiedDiff(await git(root, args));
   const skipped: { path: string; reason: string }[] = [];
 
-  if (!opts.stagedOnly && opts.includeUntracked) {
+  if (!opts.stagedOnly && !opts.range && opts.includeUntracked) {
     const out = await git(root, ['ls-files', '--others', '--exclude-standard', '-z']);
     for (const rel of out.split('\0').filter(Boolean)) {
       if (opts.exclude(rel)) {

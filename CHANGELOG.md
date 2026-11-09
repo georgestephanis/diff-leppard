@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **pre-commit hooks:** `diff-leppard` (installs itself) and `diff-leppard-system` (uses the CLI on PATH). They review staged changes at pre-commit and the pushed commits at pre-push.
+- **CLI:**
+  - `local --base <ref>` reviews everything since the merge-base with `<ref>`
+  - `local --range a..b` (or `a...b`) reviews exact commit ranges
+  - `hook` is the pre-commit entry point
+- **Claude Code plugin** with a `diff-leppard` skill covering setup, troubleshooting, reviews, and a second-opinion loop for Claude's own changes.
+- **The compiled JavaScript is committed in `dist/`.** Installing from git (`npm i -g github:…`, pre-commit, the gh extension) needs no build step, which fixes installs on npm 11. The GitHub Action no longer builds anything before reviewing.
+- **Icon** for the VS Code extension and the Claude Code plugin.
+
 ## 1.0.1 (2026-11-09)
 
 - **GitHub Action:** shortened the `action.yml` description to fit the GitHub Marketplace's 125-character limit.
