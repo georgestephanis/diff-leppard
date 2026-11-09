@@ -87,6 +87,7 @@ test('settings are validated; every key is available from the environment', asyn
 
 test('parseJsonc leaves string contents alone', () => {
   assert.deepEqual(parseJsonc('{"a": "f(x, ) // not a comment", /* c */ "b": [1, 2,],}'), { a: 'f(x, ) // not a comment', b: [1, 2] });
+  assert.deepEqual(parseJsonc('{ "url": "http://example.com/*x*/", "q": "say \\"hi\\" // there" } // done'), { url: 'http://example.com/*x*/', q: 'say "hi" // there' });
 });
 
 test('renderTerminal without color', () => {

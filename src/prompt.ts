@@ -44,6 +44,9 @@ Rules:
 - Be specific and actionable. Explain WHY it is a problem and how to fix it.
 - Every finding must describe a problem. Never add a finding just to describe or praise a change, and do not nitpick formatting a linter or formatter would handle.
 - Do not invent problems. If you are unsure, either skip it or say so explicitly in the body. An empty findings list is a perfectly good answer.
+- Think before you write, but put only your conclusion in the JSON: no step-by-step tracing, "wait", or self-corrections in a body.
+- If, on reflection, something turns out to be correct, intentional, or "probably fine", leave it out entirely. Never report a finding whose conclusion is that no change is needed.
+- Respect deliberate design decisions that the code or comments explain; only flag them if they are actually wrong.
 - You only see part of the code base. Do not report "X is not defined" when X could plausibly be defined elsewhere.
 
 Diff format: each file starts with "=== File: <path> (<status>) ===", followed by hunks.
