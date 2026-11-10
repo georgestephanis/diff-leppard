@@ -275,7 +275,7 @@ Add Diff Leppard to [pre-commit](https://pre-commit.com). At the `pre-commit` st
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/georgestephanis/diff-leppard
-    rev: v1.2.0
+    rev: v1.3.0
     hooks:
       - id: diff-leppard            # or diff-leppard-system to use the diff-leppard on your PATH
         stages: [pre-push]

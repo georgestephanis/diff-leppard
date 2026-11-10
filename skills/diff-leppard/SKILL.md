@@ -95,7 +95,7 @@ Posting is visible to others and appears **as the user**. Only post when the use
 
 ```yaml
 - repo: https://github.com/georgestephanis/diff-leppard
-  rev: v1.2.0
+  rev: v1.3.0
   hooks:
     - id: diff-leppard          # or diff-leppard-system to use the installed CLI
       stages: [pre-push]

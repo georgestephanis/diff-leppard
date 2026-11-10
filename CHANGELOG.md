@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.3.0 (2026-11-10)
+
+1.2.0 was a quiet pre-release, so this is the first full release with its changes too: `diff-leppard watch`, SARIF and reviewdog output, and stopping runaway replies early. See [1.2.0 in the changelog](https://github.com/georgestephanis/diff-leppard/blob/main/CHANGELOG.md#120-2026-11-09).
 
 - **MCP server: `diff-leppard mcp`.** Agents such as Cursor, Copilot, Claude Desktop and Claude Code can ask your model for a review with three tools: `review_local_changes`, `review_pull_request` and `check_model_server`. It is read-only (it never posts to GitHub), runs reviews one at a time with progress and cancellation, and has no dependencies.
 - **Org rollout guide** ([docs/ORG-ROLLOUT.md](docs/ORG-ROLLOUT.md)): org secrets, a workflow template, a new [reusable workflow](examples/workflows/diff-leppard-reusable.yml) that keeps settings in one place, and workflows required by org rulesets, with the fork-PR and secret caveats.
