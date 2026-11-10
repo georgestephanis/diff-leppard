@@ -1,7 +1,7 @@
 {
   "name": "diff-leppard",
   "description": "Get code reviews from your own self-hosted LLM with Diff Leppard: set it up, troubleshoot it, review local changes or GitHub PRs, and use it as a second opinion on Claude's work.",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "author": {
     "name": "George Stephanis"
   },
