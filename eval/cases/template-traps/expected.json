@@ -1,0 +1,66 @@
+{
+ "title": "Markup inside template conditionals that small models misread (should stay quiet)",
+ "expected": [],
+ "traps": [
+  {
+   "id": "empty-href",
+   "file": "templates/footer.html",
+   "lines": [
+    1,
+    16
+   ],
+   "keywords": [
+    "href=\"\"",
+    "empty href",
+    "empty link",
+    "href is empty",
+    "empty string"
+   ]
+  },
+  {
+   "id": "div-in-p",
+   "file": "templates/footer.html",
+   "lines": [
+    1,
+    16
+   ],
+   "keywords": [
+    "<div>",
+    "div inside",
+    "block element",
+    "nesting",
+    "invalid html"
+   ]
+  },
+  {
+   "id": "missing-gt",
+   "file": "templates/footer.html",
+   "lines": [
+    1,
+    16
+   ],
+   "keywords": [
+    "closing >",
+    "closing `>`",
+    "missing >",
+    "unclosed",
+    "malformed",
+    "not closed"
+   ]
+  },
+  {
+   "id": "inverted-aria",
+   "file": "templates/footer.html",
+   "lines": [
+    1,
+    16
+   ],
+   "keywords": [
+    "invert",
+    "reversed",
+    "backwards",
+    "opposite"
+   ]
+  }
+ ]
+}

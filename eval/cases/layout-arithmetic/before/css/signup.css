@@ -1,0 +1,26 @@
+.signup {
+  max-width: 990px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.signup-cols {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.signup-intro {
+  flex: 0 0 auto;
+}
+
+.signup-form {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media (min-width: 769px) {
+  .signup-cols {
+    flex-direction: row;
+  }
+}

@@ -76,9 +76,24 @@ Respond with ONLY a JSON object, no markdown fences and no other text:
   ]
 }`;
 
+/** Added to the system prompt when files are shown whole or with widened context. */
+export const CONTEXT_RULES = `Some files are shown as "whole file" or "with surrounding code": the unchanged lines (no marker) are there so you can see how the change interacts with the rest of the file. Use them:
+- CSS: check rules elsewhere in the file that the new rules compete with (equal specificity resolves by source order), and the widths, gaps and breakpoints that decide the layout at each screen size.
+- Templates: check the enclosing conditionals ({% if %}, {{#if}}, v-if, <?php if ?> …) before claiming a value can be empty or markup can render broken; read the actual tag names on the line before claiming invalid nesting.
+- Code: check other callers and the state a changed function relies on.
+Report problems the change introduces or exposes, including through its interaction with unchanged code. Do not report problems that are entirely in unchanged code and existed before the change.`;
+
+export const DESCRIPTION_CHECK = `Check each concrete claim in the change description (what it does, what it doesn't affect, what it guards against, what is new) against the diff. If the diff contradicts a claim or doesn't support it (for example a "new" check that already existed, or a change described as limited to one case that applies more widely), report a finding with category "docs", severity "minor" ("major" if the claim is about safety or data loss), quote the claim, and put it on the most relevant changed line.`;
+
 export interface PromptContext {
   title?: string;
   description?: string;
+  /** Check the description's claims against the diff (#33). */
+  checkDescription?: boolean;
+  /** Related code from elsewhere in the repo, already rendered and sized for this request. */
+  related?: string;
+  /** True when some files are shown whole or widened (adds CONTEXT_RULES). */
+  widened?: boolean;
   extraInstructions?: string;
   repoInstructions?: string;
   chunkIndex: number;
@@ -91,8 +106,12 @@ export function buildReviewMessages(chunk: Chunk, ctx: PromptContext): ChatMessa
   let system = SYSTEM_PROMPT;
   const guidelines = [ctx.repoInstructions?.trim(), ctx.extraInstructions?.trim()].filter(Boolean);
   if (guidelines.length) {
-    system += `\n\nProject-specific review guidelines (follow these):\n${guidelines.join('\n\n')}`;
+    system += `\n\nProject-specific review guidelines (follow these; they also tell you how the project works):\n${guidelines.join('\n\n')}`;
   }
+  if (ctx.widened) system += `\n\n${CONTEXT_RULES}`;
+  // Only when one request sees the whole change: a part of a split review can't tell an unsupported claim
+  // from one supported by code in another part.
+  if (ctx.checkDescription && ctx.description?.trim() && ctx.chunkCount === 1) system += `\n\n${DESCRIPTION_CHECK}`;
 
   const parts: string[] = [];
   if (ctx.title) parts.push(`Change title: ${ctx.title}`);
@@ -104,6 +123,11 @@ export function buildReviewMessages(chunk: Chunk, ctx: PromptContext): ChatMessa
   if (ctx.chunkCount > 1) {
     parts.push(
       `This change is large and has been split into ${ctx.chunkCount} parts. This is part ${ctx.chunkIndex + 1} of ${ctx.chunkCount}; review only what is shown here.`,
+    );
+  }
+  if (ctx.related?.trim()) {
+    parts.push(
+      `Related code from elsewhere in the repository, found by searching for names the change uses. It is NOT part of the change: don't comment on it, but do report problems in the change that it reveals (other uses that break, documentation or data the change contradicts):\n\n${ctx.related}`,
     );
   }
   parts.push(`Diff to review:\n\n${chunk.text}`);

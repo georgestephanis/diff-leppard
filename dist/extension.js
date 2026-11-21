@@ -39,6 +39,8 @@ const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const vscode = __importStar(require("vscode"));
 const config_1 = require("./config");
+const context_1 = require("./context");
+const flow_1 = require("./flow");
 const diff_1 = require("./diff");
 const gh_1 = require("./gh");
 const git_1 = require("./git");
@@ -76,6 +78,13 @@ function readSettings() {
         excludeGlobs: c.get('excludeGlobs', d.excludeGlobs),
         extraInstructions: c.get('extraInstructions', d.extraInstructions),
         instructionsFile: c.get('instructionsFile', d.instructionsFile).trim(),
+        instructionsFallback: c.get('instructionsFallback', d.instructionsFallback),
+        maxInstructionsChars: c.get('maxInstructionsChars', d.maxInstructionsChars),
+        fullFileMaxChars: c.get('fullFileMaxChars', d.fullFileMaxChars),
+        relatedMaxChars: c.get('relatedMaxChars', d.relatedMaxChars),
+        checkDescription: c.get('checkDescription', d.checkDescription),
+        verifyFindings: c.get('verifyFindings', d.verifyFindings),
+        maxOutputTokens: c.get('maxOutputTokens', d.maxOutputTokens),
         concurrency: c.get('concurrency', d.concurrency),
         showStatusBar: c.get('showStatusBar', true),
         github: {
@@ -366,16 +375,16 @@ class Controller {
                 vscode.window.showInformationMessage(`No ${what} to review in ${path.basename(root)}.`);
                 return undefined;
             }
-            const repoInstructions = s.instructionsFile ? await (0, git_1.readRepoFile)(root, s.instructionsFile) : undefined;
-            if (repoInstructions)
-                this.log.info(`Using review guidelines from ${s.instructionsFile}`);
+            const view = (0, context_1.gitRepoView)(root, stagedOnly ? context_1.INDEX : undefined);
+            const ctx = await (0, flow_1.prepareContext)({ files: diff.files, settings: { ...s, excludeGlobs: s.excludeGlobs }, llm, view, guideView: view, log: this.logger, signal });
             return (0, review_1.runReview)(diff.files, {
                 llm,
-                maxChunkChars: await (0, llm_1.resolveChunkChars)(llm, s.maxChunkChars, s.llm.maxOutputTokens, this.logger, signal),
+                ...ctx,
                 concurrency: s.concurrency,
                 minimumSeverity: s.minimumSeverity,
                 exclude,
-                context: { extraInstructions: s.extraInstructions, repoInstructions },
+                verify: s.verifyFindings,
+                context: { extraInstructions: s.extraInstructions, repoInstructions: ctx.repoInstructions },
                 log: this.logger,
                 signal,
                 onProgress: report,
@@ -412,14 +421,25 @@ class Controller {
         this.log.info(`=== Reviewing ${label}`);
         const out = await this.withReviewProgress(`Diff Leppard: ${label}`, async (signal, report) => {
             report('Fetching pull request…');
-            const { pr, files, skipped, repoInstructions } = await (0, pr_1.loadPullRequest)(gh, ref.repo, ref.number, s.instructionsFile, this.logger);
+            const { pr, files, skipped } = await (0, pr_1.loadPullRequest)(gh, ref.repo, ref.number, undefined, this.logger);
+            const local = await (0, context_1.localViewAt)(root, pr.headSha);
+            const ctx = await (0, flow_1.prepareContext)({
+                files,
+                settings: s,
+                llm,
+                view: local ?? (pr.headSha ? (0, context_1.githubRepoView)(gh, ref.repo, pr.headSha) : undefined),
+                guideView: (await (0, context_1.localViewAt)(root, pr.baseSha)) ?? (pr.baseSha ? (0, context_1.githubRepoView)(gh, ref.repo, pr.baseSha) : undefined),
+                log: this.logger,
+                signal,
+            });
             const result = await (0, review_1.runReview)(files, {
                 llm,
-                maxChunkChars: await (0, llm_1.resolveChunkChars)(llm, s.maxChunkChars, s.llm.maxOutputTokens, this.logger, signal),
+                ...ctx,
                 concurrency: s.concurrency,
                 minimumSeverity: s.minimumSeverity,
                 exclude,
-                context: { title: pr.title, description: pr.body, extraInstructions: s.extraInstructions, repoInstructions },
+                verify: s.verifyFindings,
+                context: { title: pr.title, description: pr.body, checkDescription: s.checkDescription, extraInstructions: s.extraInstructions, repoInstructions: ctx.repoInstructions },
                 log: this.logger,
                 signal,
                 onProgress: report,

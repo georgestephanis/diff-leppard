@@ -21,7 +21,11 @@ It can also post the result back to the PR as a GitHub review with inline commen
 | `src/llm.ts` | OpenAI-compatible + Ollama clients (streaming SSE / NDJSON, structured-output fallback) | no |
 | `src/prompt.ts` | System prompt, JSON schema, per-chunk and synthesis prompts | no |
 | `src/parse.ts` | Tolerant JSON extraction from model output (fences, `<think>`, chatter, truncation) | no |
-| `src/review.ts` | Orchestration: chunk → model → normalize → map lines onto the diff → dedupe/sort | no |
+| `src/review.ts` | Orchestration: chunk → model → normalize → map lines onto the diff → dedupe/sort → verify | no |
+| `src/context.ts` | Extra review context sized from the context window: `RepoView` (repo at a commit, read-only), whole files / widened hunks, related-code retrieval, AGENTS.md-style guidelines | no |
+| `src/verify.ts` | Verification pass: one request per serious finding that must confirm it and quote the code | no |
+| `src/agent.ts` | Experimental `--agentic` mode: read-only tools (`read_file`, `grep`, `list_dir`) and the tool loop | no |
+| `eval/` | Review-quality evaluation set (`npm run eval`); cases are small before/after trees with expected findings and traps | – |
 | `src/git.ts` | `git` subprocess helpers, local diffs, untracked files | no |
 | `src/github.ts` | GitHub REST client, PR/remote URL parsing, review payload + posting with fallbacks | no |
 | `src/report.ts` | Markdown report rendering | no |
@@ -93,12 +97,13 @@ Run `npm test` before you finish any change; it also rebuilds `dist/`. **Commit 
   - For PR reviews it's read from the base branch.
   - The VS Code extension declares the sensitive settings as `restrictedConfigurations` for untrusted workspaces.
 - **Credentials never cross hosts.** GitHub tokens are host-scoped (`githubTokenFor`), and the LLM key only goes to `baseUrl`.
-- **File reads stay in the repo.** `readRepoFile` refuses paths that resolve outside the repo; untracked symlinks are skipped.
+- **File reads stay in the repo.** `readRepoFile` refuses paths that resolve outside the repo; untracked symlinks are skipped. `RepoView` (context retrieval, agent tools) reads only through git at a commit, or files git lists in the working tree, and `safeRepoPath` rejects `..`, absolute paths and `.git`.
+- **Agent tools are read-only.** No write or exec tools; tool output is capped and treated as data.
 - **Model output is sanitized** (`sanitizeText`) before it reaches a terminal, a report or GitHub.
 
 ## Testing against a real model
 
-The mock server tests cover the protocol. For quality, point the CLI (`node dist/cli.js local …`) at a real server. A demo diff with a SQL injection, an `i <= length` off-by-one, and a hardcoded secret is a good smoke test. A decent model should flag all three on the right lines.
+The mock server tests cover the protocol. For quality, run the evaluation set against a real server: `npm run eval -- --label <name>` (see `eval/README.md`, which also explains how to add a case). Run it before and after prompt or context changes and compare recall, traps and time. For a quick check, point the CLI (`node dist/cli.js local …`) at a real server. A demo diff with a SQL injection, an `i <= length` off-by-one, and a hardcoded secret is a good smoke test. A decent model should flag all three on the right lines.
 
 Qwen3-style reasoning models can think for thousands of tokens before they answer. With vLLM/SGLang, `diffLeppard.extraBody: {"chat_template_kwargs": {"enable_thinking": false}}` makes reviews much faster. With Ollama, use `{"think": false}`.
 

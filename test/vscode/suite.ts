@@ -13,14 +13,14 @@ const REVIEW = {
 };
 
 export async function run(): Promise<void> {
-  let prompt = '';
+  const prompts: string[] = [];
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
       res.setHeader('content-type', 'application/json');
       if (req.url === '/v1/models') return res.end(JSON.stringify({ data: [{ id: 'mock-model' }] }));
-      prompt = JSON.parse(body).messages[1].content;
+      prompts.push(JSON.parse(body).messages[1].content);
       res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(REVIEW) }, finish_reason: 'stop' }] }));
     });
   });
@@ -46,8 +46,12 @@ export async function run(): Promise<void> {
       new Promise((_, rej) => setTimeout(() => rej(new Error('review timed out')), 60000)),
     ]);
 
-    assert.match(prompt, /=== File: users\.js \(modified\) ===/);
+    // First request is the review; the critical finding then gets a verification request (verifyFindings).
+    assert.equal(prompts.length, 2, 'one review request and one verification request (the nit is not verified)');
+    const [prompt, verifyPrompt] = prompts;
+    assert.match(prompt, /=== File: users\.js \(modified, whole file\) ===/);
     assert.match(prompt, /=== File: new\.js \(added\) ===/, 'untracked file included');
+    assert.match(verifyPrompt ?? '', /SQL injection/, 'critical finding sent for verification');
     const diags = vscode.languages.getDiagnostics(vscode.Uri.file(path.join(root, 'users.js')));
     assert.equal(diags.length, 1, `diagnostics on users.js: ${JSON.stringify(diags)}`);
     assert.equal(diags[0].severity, vscode.DiagnosticSeverity.Error);

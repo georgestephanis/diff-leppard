@@ -14,6 +14,10 @@ import * as path from 'path';
 import { ReviewEventSetting } from './github';
 import { JsonMode } from './llm';
 import { Severity, SEVERITIES } from './types';
+import { DEFAULT_INSTRUCTIONS_FALLBACK } from './context';
+
+export type VerifyMode = 'off' | 'critical-major' | 'all';
+export const VERIFY_MODES: VerifyMode[] = ['off', 'critical-major', 'all'];
 
 export interface CliSettings {
   provider: 'openai' | 'ollama';
@@ -36,6 +40,22 @@ export interface CliSettings {
   excludeGlobs: string[];
   extraInstructions: string;
   instructionsFile: string;
+  /** Guides to use as review guidelines when instructionsFile isn't found (AGENTS.md, …); [] = none. */
+  instructionsFallback: string[];
+  /** Most characters of guidelines per request (also capped at 15% of the request budget). */
+  maxInstructionsChars: number;
+  /** Show a changed file whole (or with widened context) up to this many characters; 0 = hunks only. */
+  fullFileMaxChars: number;
+  /** Most characters of related code from elsewhere in the repo per request; 0 = off. */
+  relatedMaxChars: number;
+  /** Check the change description's claims against the diff. */
+  checkDescription: boolean;
+  /** Second look at findings before reporting them: 'off', 'critical-major' (default) or 'all'. */
+  verifyFindings: VerifyMode;
+  /** Experimental: let the model read files and search the repo with read-only tools (needs tool calling). */
+  agentic: boolean;
+  /** Tool calls per request in agentic mode. */
+  maxToolCalls: number;
   github: {
     apiUrl: string;
     reviewEvent: ReviewEventSetting;
@@ -113,6 +133,14 @@ export function defaultSettings(): CliSettings {
     excludeGlobs: DEFAULT_EXCLUDES,
     extraInstructions: '',
     instructionsFile: '.github/code-review-instructions.md',
+    instructionsFallback: [...DEFAULT_INSTRUCTIONS_FALLBACK],
+    maxInstructionsChars: 8000,
+    fullFileMaxChars: 40000,
+    relatedMaxChars: 6000,
+    checkDescription: false,
+    verifyFindings: 'critical-major',
+    agentic: false,
+    maxToolCalls: 15,
     github: { apiUrl: 'https://api.github.com', reviewEvent: 'COMMENT', suggestionBlocks: false, attribution: true },
     watch: {
       intervalMinutes: 5,
@@ -241,6 +269,11 @@ export const REPO_CONFIG_KEYS = [
   'excludeGlobs',
   'extraInstructions',
   'instructionsFile',
+  'instructionsFallback',
+  'maxInstructionsChars',
+  'fullFileMaxChars',
+  'relatedMaxChars',
+  'checkDescription',
 ] as const;
 
 /** Keep only allowed keys from a repo config; report the rest. */
@@ -332,6 +365,14 @@ function validate(s: CliSettings): void {
   int('requestTimeoutSeconds', 1);
   int('contextLines', 0, 1000);
   int('ollamaNumCtx', 256);
+  int('maxInstructionsChars', 0);
+  int('fullFileMaxChars', 0);
+  int('relatedMaxChars', 0);
+  int('maxToolCalls', 1, 200);
+  oneOf('verifyFindings', s.verifyFindings, VERIFY_MODES);
+  bool('checkDescription', s.checkDescription);
+  bool('agentic', s.agentic);
+  if (!Array.isArray(s.instructionsFallback) || s.instructionsFallback.some((g) => typeof g !== 'string')) throw new Error('instructionsFallback must be a list of file paths');
   if (typeof s.temperature !== 'number' || !(s.temperature >= 0 && s.temperature <= 2)) {
     throw new Error(`temperature must be a number between 0 and 2 (got ${JSON.stringify(s.temperature)})`);
   }

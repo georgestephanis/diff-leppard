@@ -1,14 +1,16 @@
 /** End-to-end review flows shared by the CLI's `pr` and `watch` commands (no `vscode` imports). */
 import { CliSettings, LoadedConfig, parseJsonc, REPO_CONFIG_FILE, RepoConfigInput, userConfigPath } from './config';
 import * as path from 'path';
+import { attachFileContents, findRelatedCode, githubRepoView, gitRepoView, INDEX, loadGuidelines, localViewAt, planBudget, RepoView } from './context';
 import { makeExcluder } from './diff';
 import { ghExec, githubRemotes } from './gh';
-import { getLocalDiff, git, readRepoFile, resolveRef } from './git';
+import { getLocalDiff, git, isNullSha, resolveRef } from './git';
 import { GitHubClient, PullRequestInfo, RepoRef } from './github';
 import { LlmClient, LlmConfig, resolveChunkChars } from './llm';
 import { loadPullRequest } from './pr';
 import { renderMarkdownReport } from './report';
-import { runReview } from './review';
+import { ReviewOptions, runReview } from './review';
+import { FileDiff } from './types';
 import { Logger, ReviewResult } from './types';
 
 export function llmBase(s: CliSettings): Omit<LlmConfig, 'model'> {
@@ -71,6 +73,8 @@ export async function reviewPullRequest(p: {
   onProgress?: (message: string) => void;
   /** Already-fetched PR metadata. */
   prefetched?: PullRequestInfo;
+  /** A local clone of the repo, if any: used to search for related code when it has the PR's head commit. */
+  localRoot?: string;
 }): Promise<PrReview> {
   const label = `${p.repo.owner}/${p.repo.repo}#${p.number}`;
   let s = p.settings;
@@ -91,15 +95,36 @@ export async function reviewPullRequest(p: {
       for (const w of loaded.warnings) p.log.warn(w);
     }
   }
-  const loaded = await loadPullRequest(p.client, p.repo, p.number, s.instructionsFile, p.log, pr0);
+  // Guidelines come from prepareContext (base branch, with the AGENTS.md fallback), not loadPullRequest.
+  const loaded = await loadPullRequest(p.client, p.repo, p.number, undefined, p.log, pr0);
   const llm = await makeLlm(s, p.log);
+  // A local checkout that has the PR's head commit allows searching the repo; otherwise read through the API.
+  const local = await localViewAt(p.localRoot, loaded.pr.headSha);
+  const ctx = await prepareContext({
+    files: loaded.files,
+    settings: s,
+    llm,
+    view: local ?? (loaded.pr.headSha ? githubRepoView(p.client, p.repo, loaded.pr.headSha) : undefined),
+    guideView: (await localViewAt(p.localRoot, loaded.pr.baseSha)) ?? (loaded.pr.baseSha ? githubRepoView(p.client, p.repo, loaded.pr.baseSha) : undefined),
+    log: p.log,
+    signal: p.signal,
+  });
+  if (s.agentic && !local) p.log.warn('Agentic mode needs a local clone that has the PR head commit (run from a checkout and fetch it); reviewing without tools.');
   const result = await runReview(loaded.files, {
     llm,
-    maxChunkChars: await resolveChunkChars(llm, s.maxChunkChars, s.maxOutputTokens, p.log, p.signal),
+    ...ctx,
     concurrency: s.concurrency,
     minimumSeverity: s.minimumSeverity,
     exclude: makeExcluder(s.excludeGlobs),
-    context: { title: loaded.pr.title, description: loaded.pr.body, extraInstructions: s.extraInstructions, repoInstructions: loaded.repoInstructions },
+    verify: s.verifyFindings,
+    agent: s.agentic && local ? { view: local, before: await localViewAt(p.localRoot, loaded.pr.baseSha), maxToolCalls: s.maxToolCalls, exclude: makeExcluder(s.excludeGlobs) } : undefined,
+    context: {
+      title: loaded.pr.title,
+      description: loaded.pr.body,
+      checkDescription: s.checkDescription,
+      extraInstructions: s.extraInstructions,
+      repoInstructions: ctx.repoInstructions,
+    },
     log: p.log,
     signal: p.signal,
     onProgress: p.onProgress,
@@ -114,6 +139,74 @@ export async function reviewPullRequest(p: {
       blobBaseUrl: `https://${p.host}/${p.repo.owner}/${p.repo.repo}/blob/${pr.headSha}`,
     });
   return { pr, result, settings: s, title, markdown };
+}
+
+/**
+ * Size one request from the model's context window and gather the extra context that fits: the changed files
+ * (whole, or with widened hunks), related code from elsewhere in the repo, and the review guidelines.
+ * `view` is the repo at the reviewed (new) revision; `guideView` where guidelines are read from (for a PR, its base).
+ */
+export type ContextSettingsInput = Pick<
+  CliSettings,
+  'maxChunkChars' | 'maxOutputTokens' | 'instructionsFile' | 'instructionsFallback' | 'maxInstructionsChars' | 'fullFileMaxChars' | 'relatedMaxChars' | 'excludeGlobs'
+>;
+
+export async function prepareContext(p: {
+  files: FileDiff[];
+  settings: ContextSettingsInput;
+  llm: LlmClient;
+  view?: RepoView;
+  guideView?: RepoView;
+  log: Logger;
+  signal?: AbortSignal;
+}): Promise<Pick<ReviewOptions, 'maxChunkChars' | 'contextChars' | 'related' | 'relatedChars' | 'contextNotes'> & { repoInstructions?: string }> {
+  const s = p.settings;
+  const total = await resolveChunkChars(p.llm, s.maxChunkChars, s.maxOutputTokens, p.log, p.signal);
+  const plan = planBudget(total, s);
+  const notes: string[] = [];
+  let repoInstructions: string | undefined;
+  if (p.guideView && plan.instructions > 0) {
+    const g = await loadGuidelines(p.guideView, s.instructionsFile, s.instructionsFallback, plan.instructions, p.log);
+    if (g) {
+      repoInstructions = g.text;
+      notes.push(`guidelines: ${g.source} (${g.text.length} chars)`);
+    }
+  }
+  const used = (repoInstructions?.length ?? 0) + (s.relatedMaxChars > 0 && p.view?.grep ? plan.related : 0);
+  const maxChunkChars = Math.max(Math.min(2000, total), total - used);
+  const contextChars = Math.min(plan.fullFile, Math.floor(maxChunkChars * 0.8));
+  if (p.view && contextChars > 0) {
+    await attachFileContents(p.files, p.view, contextChars, p.log, makeExcluder(s.excludeGlobs));
+    const loaded = p.files.filter((f) => f.content).length;
+    if (loaded) notes.push(`surrounding code: up to ${contextChars} chars per file, ${loaded} file(s) loaded`);
+  }
+  let related: ReviewOptions['related'];
+  if (p.view && s.relatedMaxChars > 0 && plan.related > 0) {
+    if (!p.view.grep) p.log.info(`context: related-code search needs a local checkout of the reviewed commit; skipped (${p.view.describe})`);
+    else {
+      related = await findRelatedCode(p.files, p.view, { exclude: makeExcluder(s.excludeGlobs), log: p.log });
+      for (const [f, sn] of related) notes.push(`related to ${f}: ${sn.map((x) => `${x.path} (${x.reason})`).join('; ')}`);
+    }
+  }
+  p.log.info(`Request budget ${total} chars: diff ${maxChunkChars}, guidelines ${repoInstructions?.length ?? 0}, related up to ${s.relatedMaxChars ? plan.related : 0}+`);
+  return { maxChunkChars, contextChars, related, relatedChars: { reserve: plan.related, max: s.relatedMaxChars }, contextNotes: notes, repoInstructions };
+}
+
+/** Commit messages of a range as a change title + description (at most 20 commits / 4000 chars). */
+export async function commitMessages(root: string, range: string): Promise<{ title?: string; description: string } | undefined> {
+  if (!range || range.startsWith('-')) return undefined;
+  const out = await git(root, ['log', '--no-merges', '-n', '20', '--format=%s%x1f%b%x1e', range, '--'], true);
+  const commits = out
+    .split('\x1e')
+    .map((c) => c.trim())
+    .filter(Boolean)
+    .map((c) => {
+      const [subject, body = ''] = c.split('\x1f');
+      return { subject: subject.trim(), body: body.trim() };
+    });
+  if (!commits.length) return undefined;
+  if (commits.length === 1) return { title: commits[0].subject, description: commits[0].body.slice(0, 4000) };
+  return { description: commits.map((c) => `- ${c.subject}${c.body ? `\n  ${c.body.replace(/\n/g, '\n  ')}` : ''}`).join('\n').slice(0, 4000) };
 }
 
 /** A problem with what was asked for (bad ref, not a repo, …), as opposed to a failure while reviewing. */
@@ -141,6 +234,9 @@ export interface LocalReviewRequest {
   base?: string;
   /** Exactly these commits: `a..b`, or `a...b` for "since their merge-base". */
   range?: string;
+  /** Title and description of the change; for --range and --base the commit messages are used when not given. */
+  title?: string;
+  description?: string;
   log: Logger;
   signal?: AbortSignal;
   onProgress?: (message: string) => void;
@@ -195,16 +291,49 @@ export async function reviewLocalChanges(p: LocalReviewRequest): Promise<LocalRe
     throw new ReviewInputError((e as Error).message);
   }
   if (!diff.files.length) return { what, title, markdown: () => `No ${what} in ${name}.\n` };
-  const repoInstructions = s.instructionsFile ? await readRepoFile(p.root, s.instructionsFile) : undefined;
-  if (repoInstructions) p.log.info(`Using review guidelines from ${s.instructionsFile}`);
   const llm = await makeLlm(s, p.log);
+  // The reviewed revision: the range's end commit, else the working tree. Guidelines come from the range's
+  // start (like a PR's base), else the working tree.
+  const toSha = range ? await resolveRef(p.root, range.to) : undefined;
+  const fromSha = range && !isNullSha(range.from) ? await resolveRef(p.root, range.from).catch(() => undefined) : undefined;
+  // What the reviewed code is read from (staged reviews: the index, not the working tree), and what it changed from.
+  const reviewed = gitRepoView(p.root, toSha ?? (p.staged ? INDEX : undefined));
+  let beforeRev = fromSha;
+  if (!range) {
+    beforeRev = p.base
+      ? (await git(p.root, ['merge-base', await resolveRef(p.root, p.base), 'HEAD'], true)).trim() || undefined
+      : (await git(p.root, ['rev-parse', '--verify', '--quiet', 'HEAD'], true)).trim() || undefined;
+  }
+  const before = beforeRev ? gitRepoView(p.root, beforeRev) : undefined;
+  const ctx = await prepareContext({
+    files: diff.files,
+    settings: s,
+    llm,
+    view: reviewed,
+    guideView: range ? gitRepoView(p.root, fromSha ?? toSha) : reviewed,
+    log: p.log,
+    signal: p.signal,
+  });
+  let changeTitle = p.title;
+  let changeDescription = p.description;
+  if (changeDescription === undefined && (range || p.base)) {
+    const msgs = await commitMessages(p.root, range ? (fromSha ? `${fromSha}..${toSha}` : toSha!) : `${p.base}..HEAD`);
+    if (msgs) {
+      changeTitle ??= msgs.title;
+      changeDescription = msgs.description;
+    }
+  }
   const result = await runReview(diff.files, {
     llm,
-    maxChunkChars: await resolveChunkChars(llm, s.maxChunkChars, s.maxOutputTokens, p.log, p.signal),
+    ...ctx,
     concurrency: s.concurrency,
     minimumSeverity: s.minimumSeverity,
     exclude,
-    context: { extraInstructions: s.extraInstructions, repoInstructions },
+    verify: s.verifyFindings,
+    agent: s.agentic
+      ? { view: reviewed, before, maxToolCalls: s.maxToolCalls, exclude }
+      : undefined,
+    context: { title: changeTitle, description: changeDescription, checkDescription: s.checkDescription, extraInstructions: s.extraInstructions, repoInstructions: ctx.repoInstructions },
     log: p.log,
     signal: p.signal,
     onProgress: p.onProgress,

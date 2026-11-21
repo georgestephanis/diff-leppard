@@ -1,0 +1,8 @@
+<section class="promo{% if module.full_width %} is-full{% endif %}">
+  <div class="promo-inner">
+    <div class="promo-cols{% if module.long_form %} promo-cols--long{% endif %}">
+      <div class="promo-intro">{{ module.intro }}</div>
+      <div class="promo-form">{% form form_to_use=module.form %}</div>
+    </div>
+  </div>
+</section>

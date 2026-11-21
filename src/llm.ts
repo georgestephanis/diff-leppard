@@ -7,6 +7,31 @@ export interface ChatMessage {
 
 export type JsonMode = 'json_object' | 'json_schema' | 'none';
 
+/** A message in a tool-calling conversation (agentic mode). */
+export interface ToolMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
+  name?: string;
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  /** Parsed arguments; {} when the model sent something unparseable. */
+  args: Record<string, unknown>;
+}
+
+export interface ToolDef {
+  name: string;
+  description: string;
+  parameters: object;
+}
+
+/** The server doesn't do tool calling (or not with this model / parser). */
+export class ToolsUnsupportedError extends Error {}
+
 export interface LlmConfig {
   provider: 'openai' | 'ollama';
   baseUrl: string;
@@ -157,6 +182,84 @@ export class LlmClient {
       }
       throw e;
     }
+  }
+
+  /**
+   * One non-streaming request that may call tools. Returns either tool calls to run or a final answer.
+   * Throws ToolsUnsupportedError when the server rejects tools.
+   */
+  async chatTools(messages: ToolMessage[], tools: ToolDef[], opts: { signal?: AbortSignal; maxTokens?: number } = {}): Promise<{ content: string; toolCalls: ToolCall[]; truncated: boolean }> {
+    const ollama = this.cfg.provider === 'ollama';
+    const wireTools = tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }));
+    const wireMessages = messages.map((m) => {
+      const o: Record<string, unknown> = { role: m.role, content: m.content };
+      if (m.tool_calls?.length) {
+        o.tool_calls = m.tool_calls.map((c) =>
+          ollama
+            ? { function: { name: c.name, arguments: c.args } }
+            : { id: c.id, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args) } },
+        );
+      }
+      if (m.role === 'tool') {
+        if (ollama) o.tool_name = m.name;
+        else o.tool_call_id = m.tool_call_id;
+      }
+      return o;
+    });
+    const url = ollama ? `${this.base()}/api/chat` : `${this.base()}/chat/completions`;
+    const extra = { ...(this.cfg.extraBody ?? {}) } as Record<string, unknown>;
+    let body: Record<string, unknown>;
+    if (ollama) {
+      const extraOptions = (extra.options as Record<string, unknown>) ?? {};
+      delete extra.options;
+      body = {
+        model: this.cfg.model,
+        messages: wireMessages,
+        tools: wireTools,
+        stream: false,
+        ...extra,
+        options: { temperature: this.cfg.temperature, num_ctx: this.cfg.ollamaNumCtx, num_predict: opts.maxTokens ?? this.cfg.maxOutputTokens, ...extraOptions },
+      };
+    } else {
+      body = {
+        model: this.cfg.model,
+        messages: wireMessages,
+        tools: wireTools,
+        tool_choice: 'auto',
+        temperature: this.cfg.temperature,
+        max_tokens: opts.maxTokens ?? this.cfg.maxOutputTokens,
+        stream: false,
+        ...extra,
+      };
+    }
+    this.log.debug(`POST ${url} model=${this.cfg.model} tools=${tools.length} messages=${messages.length}`);
+    let res: Response;
+    try {
+      res = await this.request(url, { method: 'POST', body: JSON.stringify(body) }, opts.signal);
+    } catch (e) {
+      if (e instanceof LlmError && (e.status === 400 || e.status === 422 || e.status === 501) && /tool|function/i.test(e.body ?? e.message)) {
+        throw new ToolsUnsupportedError(e.message);
+      }
+      throw e;
+    }
+    const json = (await res.json()) as Record<string, any>;
+    const msg = ollama ? json.message : json.choices?.[0]?.message;
+    const truncated = ollama ? json.done_reason === 'length' : json.choices?.[0]?.finish_reason === 'length';
+    const toolCalls: ToolCall[] = [];
+    for (const [i, c] of ((msg?.tool_calls as any[]) ?? []).entries()) {
+      const fn = c?.function ?? {};
+      let args: Record<string, unknown> = {};
+      if (typeof fn.arguments === 'string') {
+        try {
+          const a = JSON.parse(fn.arguments || '{}');
+          if (a && typeof a === 'object') args = a;
+        } catch {
+          /* unparseable: run with no args, the tool reports what's missing */
+        }
+      } else if (fn.arguments && typeof fn.arguments === 'object') args = fn.arguments;
+      if (typeof fn.name === 'string') toolCalls.push({ id: typeof c.id === 'string' ? c.id : `call_${i}_${Date.now()}`, name: fn.name, args });
+    }
+    return { content: typeof msg?.content === 'string' ? msg.content : '', toolCalls, truncated };
   }
 
   private async chatOnce(messages: ChatMessage[], mode: JsonMode, opts: ChatOptions): Promise<ChatResult> {

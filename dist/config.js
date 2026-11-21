@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.REPO_CONFIG_KEYS = exports.REPO_CONFIG_FILE = exports.DEFAULT_EXCLUDES = void 0;
+exports.REPO_CONFIG_KEYS = exports.REPO_CONFIG_FILE = exports.DEFAULT_EXCLUDES = exports.VERIFY_MODES = void 0;
 exports.defaultSettings = defaultSettings;
 exports.userConfigPath = userConfigPath;
 exports.normalizeKeys = normalizeKeys;
@@ -58,6 +58,8 @@ const fs_1 = require("fs");
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
 const types_1 = require("./types");
+const context_1 = require("./context");
+exports.VERIFY_MODES = ['off', 'critical-major', 'all'];
 exports.DEFAULT_EXCLUDES = [
     '**/package-lock.json',
     '**/yarn.lock',
@@ -98,6 +100,14 @@ function defaultSettings() {
         excludeGlobs: exports.DEFAULT_EXCLUDES,
         extraInstructions: '',
         instructionsFile: '.github/code-review-instructions.md',
+        instructionsFallback: [...context_1.DEFAULT_INSTRUCTIONS_FALLBACK],
+        maxInstructionsChars: 8000,
+        fullFileMaxChars: 40000,
+        relatedMaxChars: 6000,
+        checkDescription: false,
+        verifyFindings: 'critical-major',
+        agentic: false,
+        maxToolCalls: 15,
         github: { apiUrl: 'https://api.github.com', reviewEvent: 'COMMENT', suggestionBlocks: false, attribution: true },
         watch: {
             intervalMinutes: 5,
@@ -226,6 +236,11 @@ exports.REPO_CONFIG_KEYS = [
     'excludeGlobs',
     'extraInstructions',
     'instructionsFile',
+    'instructionsFallback',
+    'maxInstructionsChars',
+    'fullFileMaxChars',
+    'relatedMaxChars',
+    'checkDescription',
 ];
 /** Keep only allowed keys from a repo config; report the rest. */
 function filterRepoConfig(json) {
@@ -329,6 +344,15 @@ function validate(s) {
     int('requestTimeoutSeconds', 1);
     int('contextLines', 0, 1000);
     int('ollamaNumCtx', 256);
+    int('maxInstructionsChars', 0);
+    int('fullFileMaxChars', 0);
+    int('relatedMaxChars', 0);
+    int('maxToolCalls', 1, 200);
+    oneOf('verifyFindings', s.verifyFindings, exports.VERIFY_MODES);
+    bool('checkDescription', s.checkDescription);
+    bool('agentic', s.agentic);
+    if (!Array.isArray(s.instructionsFallback) || s.instructionsFallback.some((g) => typeof g !== 'string'))
+        throw new Error('instructionsFallback must be a list of file paths');
     if (typeof s.temperature !== 'number' || !(s.temperature >= 0 && s.temperature <= 2)) {
         throw new Error(`temperature must be a number between 0 and 2 (got ${JSON.stringify(s.temperature)})`);
     }

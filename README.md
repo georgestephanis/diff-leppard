@@ -48,7 +48,7 @@ Set `model` to the name the server knows. If you leave it empty and the server h
 | API key | *Set LLM API Key* command (secret storage) | `apiKey` | `DIFF_LEPPARD_API_KEY` | `api-key` |
 | Extra request fields | `diffLeppard.extraBody` | `extraBody` | `DIFF_LEPPARD_EXTRA_BODY` | `extra-body` |
 | Extra headers | `diffLeppard.extraHeaders` | `extraHeaders` | `DIFF_LEPPARD_EXTRA_HEADERS` | `extra-headers` |
-| Diff chars per request (default: auto) | `diffLeppard.maxChunkChars` | `maxChunkChars` | `DIFF_LEPPARD_MAX_CHUNK_CHARS` | `max-chunk-chars` |
+| Characters per request (default: auto) | `diffLeppard.maxChunkChars` | `maxChunkChars` | `DIFF_LEPPARD_MAX_CHUNK_CHARS` | `max-chunk-chars` |
 
 The full list is in [Settings reference](#settings-reference).
 
@@ -66,6 +66,21 @@ To size chunks yourself, set `maxChunkChars`. Roughly: (context window − `maxO
 | 16k | 24000 |
 | 32k | 60000 |
 | 128k | 100000 |
+
+### What the model sees
+
+A diff alone hides many real problems: a new CSS rule that ties with one 150 lines up, an `{% if %}` guard a few lines above a link, a README saying the data folder a script reads is out of date. So each request carries more than the hunks, sized from the same context budget:
+
+1. **Review guidelines**: `instructionsFile`, or else the first of `instructionsFallback` that exists (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `CONTRIBUTING.md`). Long guides are trimmed to their headings plus the sections about reviews, tests, deploys and data. Up to `maxInstructionsChars`, and at most 15% of the request.
+2. **Surrounding code**: each changed file is shown whole when it fits in `fullFileMaxChars` (and 80% of the room left for the diff). Bigger files get their hunks widened by as many lines as fit. Unchanged lines are marked as context; comments still land on changed lines.
+3. **Related code**: names the change uses (functions, CSS classes, flags, constants) are searched for in the rest of the repo, and folders it names are listed with their README and the last commit that touched them. Other files come first, then docs and tests. Up to `relatedMaxChars`, at most 20% of the request. This needs the reviewed commit locally: local reviews always have it, and `pr` does when run from a clone that has fetched the PR head.
+4. **Description check** (off by default): the PR description (for `local --range` and `--base`, the commit messages) is checked against the diff, and claims the code doesn't support are reported (`checkDescription`). This only happens when the whole change fits in one request, since a part of a split review can't see the code that might back a claim.
+
+With a small context window these shrink so the diff keeps most of the room; with a large one they fill up to their caps. `maxChunkChars`, automatic or set by you, is the size of one whole request, so guidelines and related code come out of it too. `--no-context` turns off whole files, related code and the `AGENTS.md` fallback; a configured `instructionsFile` is still used, as before.
+
+After the review, critical and major findings get a **second look** (`verifyFindings`): a separate request with the code around the finding must confirm it and quote the lines that prove it. Rejected findings are dropped (listed in `-v` output and in JSON as `rejectedFindings`); findings it can't decide are kept one severity lower. Set `verifyFindings` to `all` to check every finding, or `off`.
+
+**Experimental: `--agentic`** (`agentic: true`) lets the model call read-only tools before answering: `read_file` (also the version before the change), `grep` and `list_dir`, confined to the repository at the reviewed commit, with at most `maxToolCalls` calls and tool output capped by the context budget. It needs a server with tool calling (vLLM with `--enable-auto-tool-choice` and a tool parser, SGLang, LM Studio, recent Ollama) and falls back to a normal review if the server refuses tools. It's slower; see the numbers in [#35](https://github.com/georgestephanis/diff-leppard/issues/35).
 
 **Ollama:** Ollama silently truncates prompts longer than its context window, which is small by default. Use `provider: "ollama"` so Diff Leppard can set `num_ctx` (`ollamaNumCtx`), or start Ollama with `OLLAMA_CONTEXT_LENGTH=16384`.
 
@@ -155,7 +170,7 @@ diff-leppard pr 123 -f json           # machine-readable output (also -f markdow
 Settings are read in this order, each overriding the one before:
 
 1. `~/.config/diff-leppard/config.json` (yours; may hold `apiKey`)
-2. `<repo>/.diff-leppard.json`, shared per repo. It may only set review preferences: `model`, `temperature`, `maxChunkChars`, `contextLines`, `includeUntracked`, `minimumSeverity`, `excludeGlobs`, `extraInstructions` and `instructionsFile`. Other keys are ignored with a warning. For PR reviews it's read from the PR's **base** branch, so a PR can't change where your credentials go or how it is reviewed.
+2. `<repo>/.diff-leppard.json`, shared per repo. It may only set review preferences: `model`, `temperature`, `maxChunkChars`, `contextLines`, `includeUntracked`, `minimumSeverity`, `excludeGlobs`, `extraInstructions`, `instructionsFile`, `instructionsFallback`, `maxInstructionsChars`, `fullFileMaxChars`, `relatedMaxChars` and `checkDescription`. Other keys are ignored with a warning. For PR reviews it's read from the PR's **base** branch, so a PR can't change where your credentials go or how it is reviewed.
 3. `DIFF_LEPPARD_*` environment variables
 4. command-line flags
 
@@ -423,12 +438,19 @@ The names below are CLI config keys:
 | `concurrency` | `1` | Parallel requests (2–4 is fine on vLLM) |
 | `ollamaNumCtx` | `16384` | |
 | `extraHeaders`, `extraBody` | `{}` | Merged into every request |
-| `maxChunkChars` | `0` (auto) | Sized to the model's context window; see [sizing](#picking-a-model-and-sizing-the-context) |
+| `maxChunkChars` | `0` (auto) | Characters per request (diff plus guidelines and related code), sized to the model's context window; see [sizing](#picking-a-model-and-sizing-the-context) |
 | `contextLines` | `5` | Context lines in local diffs |
 | `includeUntracked` | `true` | |
 | `minimumSeverity` | `minor` | `critical`, `major`, `minor` or `nit` |
 | `excludeGlobs` | lockfiles, minified, `dist/`, `vendor/`… | |
 | `extraInstructions`, `instructionsFile` | `""`, `.github/code-review-instructions.md` | |
+| `instructionsFallback` | `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `CONTRIBUTING.md` | Guides used as guidelines when `instructionsFile` doesn't exist; `[]` to turn off |
+| `maxInstructionsChars` | `8000` | Also capped at 15% of the request |
+| `fullFileMaxChars` | `40000` | Show changed files whole up to this size, else widen hunks; `0` = hunks only. See [what the model sees](#what-the-model-sees) |
+| `relatedMaxChars` | `6000` | Related code from elsewhere in the repo per request; `0` = off |
+| `checkDescription` | `false` | Report description claims the diff doesn't support (off by default: more false alarms than real ones in testing) |
+| `verifyFindings` | `critical-major` | Second look at findings before reporting: `off`, `critical-major` or `all` |
+| `agentic`, `maxToolCalls` | `false`, `15` | Experimental read-only tools for the model (needs tool calling) |
 | `github.apiUrl`, `github.reviewEvent`, `github.suggestionBlocks` | `https://api.github.com`, `COMMENT`, `false` | `reviewEvent` is what `--post` and the posting prompt use |
 | `github.attribution` | `true` | End posted reviews with "Review generated by Diff Leppard, running `<model>`" |
 

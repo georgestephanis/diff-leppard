@@ -6,6 +6,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.stripThinking = stripThinking;
 exports.parseModelOutput = parseModelOutput;
+exports.parseJsonObject = parseJsonObject;
 /**
  * Remove reasoning that some models emit before their answer: leading <think>…</think> blocks, or
  * everything up to a dangling </think> (some servers drop the opening tag). Only text before the first
@@ -147,4 +148,20 @@ function parseModelOutput(raw) {
     if (summary !== undefined || findings.length)
         return { summary, findings, ok: true, partial: true };
     return { findings: [], ok: false, partial: false };
+}
+/** The first JSON object in a reply (after reasoning, fences and chatter), for small structured answers. */
+function parseJsonObject(raw) {
+    const text = stripThinking(raw);
+    for (const candidate of [...fencedBlocks(text), text]) {
+        const t = candidate.trim();
+        const direct = tryParse(t);
+        if (direct && typeof direct === 'object' && !Array.isArray(direct))
+            return direct;
+        for (const s of scanObjects(t)) {
+            const o = tryParse(s);
+            if (o && typeof o === 'object' && !Array.isArray(o))
+                return o;
+        }
+    }
+    return undefined;
 }
