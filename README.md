@@ -1,5 +1,9 @@
 # Diff Leppard 🐆
 
+> [!TIP]
+> **Look before you build.** [wvw.dev](https://wvw.dev) is a catalog of open-source apps, many of them built with AI.
+> When this was written, nothing there did code review. The closest is [git-rewrite-commits](https://wvw.dev/#/discover/git-rewrite-commits) (rewrites commit messages with Ollama or GPT). Before spending tokens on a new app, search wvw.dev for something you can fork (or fork this one).
+
 > *Pour some suggestions on me.*
 
 AI code review on **your own model server**. It works with vLLM, Ollama, LM Studio, llama.cpp, SGLang, LocalAI, or anything else that speaks the OpenAI `/v1/chat/completions` API. Your code goes only to your server, and to GitHub if you post the review.
