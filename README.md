@@ -2,7 +2,7 @@
 
 > [!TIP]
 > **Look before you build.** [wvw.dev](https://wvw.dev) is a catalog of open-source apps, many of them built with AI.
-> Nothing else there does code review yet. The closest is [git-rewrite-commits](https://wvw.dev/#/discover/git-rewrite-commits) (rewrites commit messages with Ollama or GPT). Before spending tokens on a new app, search wvw.dev for something you can fork, this repo included.
+> When this was written, nothing there did code review. The closest is [git-rewrite-commits](https://wvw.dev/#/discover/git-rewrite-commits) (rewrites commit messages with Ollama or GPT). Before spending tokens on a new app, search wvw.dev for something you can fork (or fork this one).
 
 > *Pour some suggestions on me.*
 
