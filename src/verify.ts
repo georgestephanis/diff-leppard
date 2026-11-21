@@ -77,6 +77,8 @@ function lower(s: Severity): Severity {
 export interface VerifyOptions {
   llm: LlmClient;
   mode: VerifyMode;
+  /** "Unsure" lowers a finding's severity, but never below this (it would silently disappear). */
+  minimumSeverity?: Severity;
   maxChars: number;
   concurrency: number;
   log: Logger;
@@ -111,10 +113,15 @@ export async function verifyFindings(findings: Finding[], files: FileDiff[], opt
             { role: 'system', content: VERIFY_SYSTEM },
             { role: 'user', content: user },
           ],
-          { signal: opts.signal, schema: VERIFY_SCHEMA, maxTokens: 1024 },
+          { signal: opts.signal, schema: VERIFY_SCHEMA },
         );
         const v = parseJsonObject(res.content);
-        let verdict = typeof v?.verdict === 'string' ? v.verdict.toLowerCase() : 'unsure';
+        // No usable answer (cut off, still thinking, not JSON): the check didn't happen, so keep the finding as is.
+        if (!v || typeof v.verdict !== 'string' || !['confirmed', 'rejected', 'unsure'].includes(v.verdict.toLowerCase())) {
+          opts.log.warn(`Verification of "${f.title}" gave no usable answer${res.truncated ? ' (output cut off)' : ''}; keeping it unchanged.`);
+          continue;
+        }
+        let verdict = v.verdict.toLowerCase();
         const evidence = typeof v?.evidence === 'string' ? sanitizeText(v.evidence).trim() : '';
         const reason = typeof v?.reason === 'string' ? sanitizeText(v.reason).trim() : '';
         // A confirmation must point at real code; one that quotes code that isn't there is a misreading.
@@ -126,7 +133,9 @@ export async function verifyFindings(findings: Finding[], files: FileDiff[], opt
         } else if (verdict === 'confirmed') {
           out[i] = { ...f, verified: true, evidence: evidence || undefined };
         } else {
-          out[i] = { ...f, severity: lower(f.severity) };
+          // Lower one step, unless that would drop it below the reported threshold.
+          const lowered = lower(f.severity);
+          out[i] = { ...f, severity: severityRank(lowered) > severityRank(opts.minimumSeverity ?? 'nit') ? f.severity : lowered };
         }
       } catch (e) {
         if (opts.signal?.aborted) return;

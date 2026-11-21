@@ -105,6 +105,7 @@ async function runReview(files, opts) {
         const v = await (0, verify_1.verifyFindings)(all, included, {
             llm: opts.llm,
             mode: opts.verify,
+            minimumSeverity: opts.minimumSeverity,
             maxChars: opts.maxChunkChars,
             concurrency: opts.concurrency,
             log: opts.log,
@@ -112,7 +113,7 @@ async function runReview(files, opts) {
         });
         if (opts.signal?.aborted)
             throw new CancelledError();
-        all = v.kept.filter((f) => (0, types_1.severityRank)(f.severity) <= minRank);
+        all = v.kept;
         if (v.rejected.length) {
             result.rejectedFindings = v.rejected;
             opts.log.info(`Verification rejected ${v.rejected.length} finding(s): ${v.rejected.map((f) => f.title).join('; ')}`);
@@ -157,8 +158,8 @@ async function reviewChunk(chunk, index, count, opts, onChars) {
     opts.log.debug(`--- prompt part ${index + 1}/${count} (${messages.map((m) => m.content.length).reduce((a, b) => a + b)} chars) ---`);
     let res;
     if (opts.agent && !agentUnsupported.has(opts.llm)) {
-        // Tool output may use whatever room this request's diff and related code left, but at least a few KB.
-        const budgetChars = Math.max(4000, opts.maxChunkChars - chunk.text.length);
+        // Tool output may use whatever room this request's diff and related code left (both count against the budget).
+        const budgetChars = Math.max(0, opts.maxChunkChars + (opts.relatedChars?.reserve ?? 0) - chunk.text.length - (related?.length ?? 0));
         try {
             const a = await (0, agent_1.agenticReply)(opts.llm, messages, { ...opts.agent, budgetChars }, opts.log, opts.signal);
             opts.log.info(`Part ${index + 1}: ${a.toolCalls} tool call(s), ${a.toolChars} chars of tool output`);

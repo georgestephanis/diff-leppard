@@ -64,8 +64,8 @@ function int(v) {
 async function runTool(name, args, o) {
     try {
         if (name === 'read_file') {
-            const p = str(args.path);
-            if (!p || !(0, context_1.safeRepoPath)(p))
+            const p = (0, context_1.safeRepoPath)(str(args.path) ?? '');
+            if (!p)
                 return 'error: path must be a repository-relative path';
             if (o.exclude(p))
                 return `error: ${p} is excluded from review`;
@@ -96,10 +96,10 @@ async function runTool(name, args, o) {
             return cap(hits.slice(0, 60).map((h) => `${h.path}:${h.line}: ${h.text.trim().slice(0, 200)}`).join('\n') + (hits.length > 60 ? `\n… ${hits.length} matches in total` : ''));
         }
         if (name === 'list_dir') {
-            const p = str(args.path)?.replace(/\/+$/, '');
-            if (!p || !(0, context_1.safeRepoPath)(p))
+            const p = (0, context_1.safeRepoPath)(str(args.path) ?? '');
+            if (!p)
                 return 'error: path must be a repository-relative directory';
-            const files = await o.view.list?.(p, 2000);
+            const files = (await o.view.list?.(p, 2000))?.filter((f) => !o.exclude(f));
             if (!files?.length)
                 return `${p} is not a directory at this commit (or is empty)`;
             const last = await o.view.lastChange?.(p);
@@ -133,9 +133,10 @@ async function agenticReply(llm, messages, o, log, signal) {
                 exhausted = true;
             }
             else {
+                chars += JSON.stringify(c.args).length + c.name.length;
                 out = await runTool(c.name, c.args, o);
                 if (chars + out.length > o.budgetChars)
-                    out = cap(out, Math.max(200, o.budgetChars - chars));
+                    out = cap(out, Math.max(0, o.budgetChars - chars));
                 calls++;
                 chars += out.length;
                 log.info(`  tool ${c.name}(${JSON.stringify(c.args).slice(0, 120)}) → ${out.length} chars`);

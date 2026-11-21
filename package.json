@@ -54,6 +54,7 @@
         "diffLeppard.extraHeaders",
         "diffLeppard.extraBody",
         "diffLeppard.instructionsFile",
+        "diffLeppard.instructionsFallback",
         "diffLeppard.github.apiUrl",
         "diffLeppard.github.auth",
         "diffLeppard.github.postReview",
@@ -252,7 +253,7 @@
             "default": 0,
             "minimum": 0,
             "order": 20,
-            "markdownDescription": "Maximum diff characters per model request. `0` (default) = **auto**: sized to the model's context window as reported by the server (vLLM, apfel, …; for the `ollama` provider, `ollamaNumCtx`), minus `maxOutputTokens` and prompt overhead, capped at 100,000. Falls back to 24,000 if the server doesn't report one. Set a number to override."
+            "markdownDescription": "Maximum characters per model request: the diff plus review guidelines and related code. `0` (default) = **auto**: sized to the model's context window as reported by the server (vLLM, apfel, …; for the `ollama` provider, `ollamaNumCtx`), minus `maxOutputTokens` and prompt overhead, capped at 100,000. Falls back to 24,000 if the server doesn't report one. Set a number to override."
           },
           "diffLeppard.contextLines": {
             "type": "integer",

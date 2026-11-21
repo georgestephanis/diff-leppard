@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_INSTRUCTIONS_FALLBACK = void 0;
+exports.DEFAULT_INSTRUCTIONS_FALLBACK = exports.INDEX = void 0;
 exports.safeRepoPath = safeRepoPath;
 exports.gitRepoView = gitRepoView;
 exports.githubRepoView = githubRepoView;
@@ -67,28 +67,31 @@ function safeRepoPath(p) {
         return undefined;
     return clean;
 }
+/** Pass as `rev` to gitRepoView for the index (staged content), like `git show :path`. */
+exports.INDEX = ':';
 /**
- * A view of a local git repository: at `rev` (a commit) or, with no rev, the working tree.
+ * A view of a local git repository: at `rev` (a commit), the index (INDEX), or, with no rev, the working tree.
  * Reads go through git (`git show rev:path`, or the index/working tree via `git ls-files`), so nothing
  * outside the repository's tracked or untracked-but-not-ignored files is ever read.
  */
 function gitRepoView(root, rev) {
     const tracked = async (p) => (await (0, git_1.git)(root, ['ls-files', '--cached', '--others', '--exclude-standard', '--', p], true)).split('\n').filter(Boolean);
     return {
-        describe: rev ? `git ${rev.slice(0, 12)}` : 'working tree',
+        describe: rev === exports.INDEX ? 'git index' : rev ? `git ${rev.slice(0, 12)}` : 'working tree',
         async read(p, maxBytes = DEFAULT_MAX_READ) {
             const safe = safeRepoPath(p);
             if (!safe)
                 return undefined;
             let text;
             if (rev) {
-                const size = parseInt((await (0, git_1.git)(root, ['cat-file', '-s', `${rev}:${safe}`], true)).trim(), 10);
+                const spec = rev === exports.INDEX ? `:${safe}` : `${rev}:${safe}`;
+                const size = parseInt((await (0, git_1.git)(root, ['cat-file', '-s', spec], true)).trim(), 10);
                 if (!(size >= 0) || size > maxBytes)
                     return undefined;
-                const type = (await (0, git_1.git)(root, ['cat-file', '-t', `${rev}:${safe}`], true)).trim();
+                const type = (await (0, git_1.git)(root, ['cat-file', '-t', spec], true)).trim();
                 if (type !== 'blob')
                     return undefined;
-                text = await (0, git_1.git)(root, ['cat-file', 'blob', `${rev}:${safe}`], true);
+                text = await (0, git_1.git)(root, ['cat-file', 'blob', spec], true);
             }
             else {
                 // Only files git would show (tracked, or untracked and not ignored): never a symlink out of the repo.
@@ -118,14 +121,16 @@ function gitRepoView(root, rev) {
             const args = ['grep', '-n', '-I', '-F', '-z', '--full-name', '--no-color', '-m', '5'];
             for (const n of uniq)
                 args.push('-e', n);
-            if (rev)
+            if (rev === exports.INDEX)
+                args.push('--cached');
+            else if (rev)
                 args.push(rev);
             else
                 args.push('--untracked');
             args.push('--');
             const out = await (0, git_1.git)(root, args, true);
             const hits = [];
-            const prefix = rev ? `${rev}:` : '';
+            const prefix = rev && rev !== exports.INDEX ? `${rev}:` : '';
             for (const row of out.split('\n')) {
                 if (!row)
                     continue;
@@ -143,16 +148,18 @@ function gitRepoView(root, rev) {
             const safe = safeRepoPath(p);
             if (!safe)
                 return undefined;
-            const out = await (0, git_1.git)(root, ['log', '-1', '--format=%h %ad %s', '--date=short', ...(rev ? [rev] : []), '--', safe], true);
+            const out = await (0, git_1.git)(root, ['log', '-1', '--format=%h %ad %s', '--date=short', ...(rev && rev !== exports.INDEX ? [rev] : []), '--', safe], true);
             return out.trim() || undefined;
         },
         async list(dir, max) {
             const safe = safeRepoPath(dir);
             if (!safe)
                 return undefined;
-            const out = rev
-                ? await (0, git_1.git)(root, ['ls-tree', '-r', '--name-only', rev, '--', `${safe}/`], true)
-                : (await tracked(`${safe}/`)).join('\n');
+            const out = rev === exports.INDEX
+                ? await (0, git_1.git)(root, ['ls-files', '--cached', '--', `${safe}/`], true)
+                : rev
+                    ? await (0, git_1.git)(root, ['ls-tree', '-r', '--name-only', rev, '--', `${safe}/`], true)
+                    : (await tracked(`${safe}/`)).join('\n');
             const files = out.split('\n').filter(Boolean);
             return files.length ? files.slice(0, max) : undefined;
         },
@@ -197,23 +204,28 @@ function planBudget(total, s) {
 // Whole files / widened hunks
 // ---------------------------------------------------------------------------
 /** Load the new version of each changed file (for whole-file or widened-context rendering). */
-async function attachFileContents(files, view, maxChars, log) {
+async function attachFileContents(files, view, maxChars, log, exclude = () => false) {
     if (maxChars <= 0)
         return;
     let n = 0;
-    await Promise.all(files.map(async (f) => {
-        if (f.binary || f.status === 'deleted' || f.status === 'added')
-            return; // an added file's hunk is already the whole file
-        // Read a little more than the budget: widened context still helps when the whole file doesn't fit.
-        const text = await view.read(f.path, maxChars * 8).catch(() => undefined);
-        if (text === undefined)
-            return;
-        if (!(0, diff_1.contentMatchesDiff)(f, text)) {
-            log.debug(`context: ${f.path} at ${view.describe} doesn't match the diff; using hunks only`);
-            return;
+    // An added file's hunk is already the whole file; excluded files aren't reviewed.
+    const todo = files.filter((f) => !f.binary && f.status !== 'deleted' && f.status !== 'added' && !exclude(f.path));
+    let next = 0;
+    // At most 4 reads at a time: through the GitHub API each one is a request.
+    await Promise.all(Array.from({ length: Math.min(4, todo.length) }, async () => {
+        while (next < todo.length) {
+            const f = todo[next++];
+            // Read a little more than the budget: widened context still helps when the whole file doesn't fit.
+            const text = await view.read(f.path, maxChars * 8).catch(() => undefined);
+            if (text === undefined)
+                continue;
+            if (!(0, diff_1.contentMatchesDiff)(f, text)) {
+                log.debug(`context: ${f.path} at ${view.describe} doesn't match the diff; using hunks only`);
+                continue;
+            }
+            f.content = text;
+            n++;
         }
-        f.content = text;
-        n++;
     }));
     if (n)
         log.info(`context: loaded ${n} changed file(s) from ${view.describe} for surrounding code`);

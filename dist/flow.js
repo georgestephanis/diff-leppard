@@ -167,10 +167,10 @@ async function prepareContext(p) {
         }
     }
     const used = (repoInstructions?.length ?? 0) + (s.relatedMaxChars > 0 && p.view?.grep ? plan.related : 0);
-    const maxChunkChars = Math.max(2000, total - used);
+    const maxChunkChars = Math.max(Math.min(2000, total), total - used);
     const contextChars = Math.min(plan.fullFile, Math.floor(maxChunkChars * 0.8));
     if (p.view && contextChars > 0) {
-        await (0, context_1.attachFileContents)(p.files, p.view, contextChars, p.log);
+        await (0, context_1.attachFileContents)(p.files, p.view, contextChars, p.log, (0, diff_1.makeExcluder)(s.excludeGlobs));
         const loaded = p.files.filter((f) => f.content).length;
         if (loaded)
             notes.push(`surrounding code: up to ${contextChars} chars per file, ${loaded} file(s) loaded`);
@@ -275,19 +275,28 @@ async function reviewLocalChanges(p) {
     // start (like a PR's base), else the working tree.
     const toSha = range ? await (0, git_1.resolveRef)(p.root, range.to) : undefined;
     const fromSha = range && !(0, git_1.isNullSha)(range.from) ? await (0, git_1.resolveRef)(p.root, range.from).catch(() => undefined) : undefined;
+    // What the reviewed code is read from (staged reviews: the index, not the working tree), and what it changed from.
+    const reviewed = (0, context_1.gitRepoView)(p.root, toSha ?? (p.staged ? context_1.INDEX : undefined));
+    let beforeRev = fromSha;
+    if (!range) {
+        beforeRev = p.base
+            ? (await (0, git_1.git)(p.root, ['merge-base', await (0, git_1.resolveRef)(p.root, p.base), 'HEAD'], true)).trim() || undefined
+            : (await (0, git_1.git)(p.root, ['rev-parse', '--verify', '--quiet', 'HEAD'], true)).trim() || undefined;
+    }
+    const before = beforeRev ? (0, context_1.gitRepoView)(p.root, beforeRev) : undefined;
     const ctx = await prepareContext({
         files: diff.files,
         settings: s,
         llm,
-        view: (0, context_1.gitRepoView)(p.root, toSha),
-        guideView: (0, context_1.gitRepoView)(p.root, fromSha ?? toSha),
+        view: reviewed,
+        guideView: range ? (0, context_1.gitRepoView)(p.root, fromSha ?? toSha) : reviewed,
         log: p.log,
         signal: p.signal,
     });
     let changeTitle = p.title;
     let changeDescription = p.description;
     if (changeDescription === undefined && (range || p.base)) {
-        const msgs = await commitMessages(p.root, range ? (fromSha ? `${fromSha}..${toSha}` : toSha) : `${p.base}...HEAD`);
+        const msgs = await commitMessages(p.root, range ? (fromSha ? `${fromSha}..${toSha}` : toSha) : `${p.base}..HEAD`);
         if (msgs) {
             changeTitle ??= msgs.title;
             changeDescription = msgs.description;
@@ -301,7 +310,7 @@ async function reviewLocalChanges(p) {
         exclude,
         verify: s.verifyFindings,
         agent: s.agentic
-            ? { view: (0, context_1.gitRepoView)(p.root, toSha), before: fromSha ? (0, context_1.gitRepoView)(p.root, fromSha) : range ? undefined : (0, context_1.gitRepoView)(p.root, 'HEAD'), maxToolCalls: s.maxToolCalls, exclude }
+            ? { view: reviewed, before, maxToolCalls: s.maxToolCalls, exclude }
             : undefined,
         context: { title: changeTitle, description: changeDescription, checkDescription: s.checkDescription, extraInstructions: s.extraInstructions, repoInstructions: ctx.repoInstructions },
         log: p.log,

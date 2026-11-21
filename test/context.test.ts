@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, symlinkSync } from 'node:fs';
 import http from 'node:http';
 import { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -12,6 +12,7 @@ import {
   extractPaths,
   findRelatedCode,
   gitRepoView,
+  INDEX,
   loadGuidelines,
   planBudget,
   renderRelated,
@@ -173,6 +174,10 @@ test('planBudget scales with the context window', () => {
   assert.equal(small.related, 2400);
   assert.ok(small.fullFile <= 12000 - 1800 - 2400);
   assert.equal(planBudget(100000, { ...s, fullFileMaxChars: 0 }).fullFile, 0);
+  for (const total of [1000, 2000, 5000, 12000, 30000, 100000]) {
+    const b = planBudget(total, s);
+    assert.ok(b.instructions + b.related + b.fullFile <= total, `parts fit in ${total}`);
+  }
 });
 
 test('guidelines: configured file first, then AGENTS.md; long guides keep key sections', async () => {
@@ -228,7 +233,11 @@ before(async () => {
       seen.push(parsed);
       const next = replies.shift() ?? { content: '{"summary":"ok","findings":[]}' };
       res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: next }] }));
+      const { status, error, finish, ...message } = next as { status?: number; error?: string; finish?: string };
+      if (status) {
+        res.statusCode = status;
+        res.end(JSON.stringify({ error: { message: error } }));
+      } else res.end(JSON.stringify({ choices: [{ finish_reason: finish ?? 'stop', message }] }));
     });
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -302,4 +311,106 @@ test('agentic mode runs tools, then parses the answer; stops at the tool budget'
   assert.equal(a.toolCalls, 2);
   assert.equal(a.content, '{"summary":"done","findings":[]}');
   assert.equal(seen.at(-1).tools, undefined, 'the last request has no tools');
+});
+
+test('verification keeps findings when the check gives no answer, and never demotes below the threshold', async () => {
+  const files = rangeDiff();
+  files.find((f) => f.path === 'styles/card.css')!.content = CSS_AFTER;
+  const finding = (title: string) => ({ file: 'styles/card.css', line: 62, severity: 'major', title, body: 'b' });
+  replies.length = 0;
+  seen.length = 0;
+  replies.push({ content: JSON.stringify({ summary: 's', findings: [finding('Cut off'), finding('Unsure')] }) });
+  replies.push({ content: '<think>still going', finish: 'length' });
+  replies.push({ content: '{"verdict":"unsure","evidence":"","reason":"?"}' });
+  const result = await runReview(files, {
+    llm: new LlmClient(cfg()),
+    maxChunkChars: 20000,
+    concurrency: 1,
+    minimumSeverity: 'major',
+    exclude: () => false,
+    context: {},
+    log: nullLogger,
+    verify: 'critical-major',
+  });
+  assert.deepEqual(result.findings.map((f) => [f.title, f.severity]), [['Cut off', 'major'], ['Unsure', 'major']]);
+  assert.equal(result.rejectedFindings, undefined);
+  assert.equal(seen[1].max_tokens, 512, 'verification uses the normal output budget');
+});
+
+test('the description check runs only when one request sees the whole change', () => {
+  const chunk = { files: [], text: 'x' };
+  const one = buildReviewMessages(chunk, { description: 'Adds a guard', checkDescription: true, chunkIndex: 0, chunkCount: 1 });
+  assert.match(one[0].content, /Check each concrete claim/);
+  const split = buildReviewMessages(chunk, { description: 'Adds a guard', checkDescription: true, chunkIndex: 0, chunkCount: 2 });
+  assert.doesNotMatch(split[0].content, /Check each concrete claim/);
+});
+
+test('commitMessages for --base lists only the branch\'s own commits', async () => {
+  g('checkout', '-q', '-b', 'side', from);
+  write('side.txt', 'x\n');
+  g('add', '-A');
+  g('commit', '-q', '-m', 'Side change');
+  try {
+    assert.deepEqual(await commitMessages(repo, 'main..HEAD'), { title: 'Side change', description: '' });
+  } finally {
+    g('checkout', '-q', 'main');
+  }
+});
+
+test('the index view shows staged content, not unstaged edits', async () => {
+  const file = path.join(repo, 'scripts/other.py');
+  const original = readFileSync(file, 'utf8');
+  try {
+    writeFileSync(file, 'STAGED\n' + original);
+    g('add', 'scripts/other.py');
+    writeFileSync(file, 'STAGED\n' + original + 'UNSTAGED\n');
+    const idx = gitRepoView(repo, INDEX);
+    assert.equal(await idx.read('scripts/other.py'), 'STAGED\n' + original);
+    assert.ok((await idx.grep!(['STAGED'], 5)).every((h) => h.path === 'scripts/other.py'));
+    assert.equal((await idx.grep!(['UNSTAGED'], 5)).length, 0);
+    assert.ok((await idx.list!('scripts', 10))!.includes('scripts/other.py'));
+  } finally {
+    writeFileSync(file, original);
+    g('add', 'scripts/other.py');
+  }
+});
+
+test('agent tools apply excludes to the normalised path, and to list_dir results', async () => {
+  const exclude = (p: string) => p.startsWith('data/rows/');
+  const o = { view: gitRepoView(repo, to), maxToolCalls: 5, budgetChars: 10000, exclude };
+  for (const p of ['data/rows/a.json', './data/rows/a.json', 'data\\rows\\a.json']) assert.match(await runTool('read_file', { path: p }, o), /excluded/, p);
+  const listing = await runTool('list_dir', { path: 'data' }, o);
+  assert.match(listing, /data\/README\.md/);
+  assert.doesNotMatch(listing, /rows/);
+});
+
+test('removed lines from a -U0 deletion-only hunk sit after the line before them', () => {
+  const files = parseUnifiedDiff(`diff --git a/f.txt b/f.txt
+--- a/f.txt
++++ b/f.txt
+@@ -3 +2,0 @@
+-c
+`);
+  const out = renderWithContext(files[0], 'a\nb\nd\n', Infinity);
+  assert.match(out, /^ {3}2 {3}b\n {4} - c\n {3}3 {3}d$/m);
+});
+
+test('agentic mode falls back to a normal review when the server rejects tools', async () => {
+  const files = rangeDiff();
+  replies.length = 0;
+  seen.length = 0;
+  replies.push({ status: 400, error: '"auto" tool choice requires --enable-auto-tool-choice' });
+  replies.push({ content: '{"summary":"plain","findings":[]}' });
+  const result = await runReview(files, {
+    llm: new LlmClient(cfg()),
+    maxChunkChars: 20000,
+    concurrency: 1,
+    minimumSeverity: 'minor',
+    exclude: () => false,
+    context: {},
+    log: nullLogger,
+    agent: { view: gitRepoView(repo, to), maxToolCalls: 3, exclude: () => false },
+  });
+  assert.equal(result.summary, 'plain');
+  assert.equal(seen[1].tools, undefined);
 });

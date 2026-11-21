@@ -375,7 +375,7 @@ class Controller {
                 vscode.window.showInformationMessage(`No ${what} to review in ${path.basename(root)}.`);
                 return undefined;
             }
-            const view = (0, context_1.gitRepoView)(root);
+            const view = (0, context_1.gitRepoView)(root, stagedOnly ? context_1.INDEX : undefined);
             const ctx = await (0, flow_1.prepareContext)({ files: diff.files, settings: { ...s, excludeGlobs: s.excludeGlobs }, llm, view, guideView: view, log: this.logger, signal });
             return (0, review_1.runReview)(diff.files, {
                 llm,

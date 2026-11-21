@@ -92,7 +92,9 @@ function buildReviewMessages(chunk, ctx) {
     }
     if (ctx.widened)
         system += `\n\n${exports.CONTEXT_RULES}`;
-    if (ctx.checkDescription && ctx.description?.trim())
+    // Only when one request sees the whole change: a part of a split review can't tell an unsupported claim
+    // from one supported by code in another part.
+    if (ctx.checkDescription && ctx.description?.trim() && ctx.chunkCount === 1)
         system += `\n\n${exports.DESCRIPTION_CHECK}`;
     const parts = [];
     if (ctx.title)

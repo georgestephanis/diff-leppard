@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { defaultSettings, VerifyMode } from './config';
-import { githubRepoView, gitRepoView, localViewAt } from './context';
+import { githubRepoView, gitRepoView, INDEX, localViewAt } from './context';
 import { prepareContext } from './flow';
 import { makeExcluder } from './diff';
 import { ghExec, githubRemotes } from './gh';
@@ -394,7 +394,7 @@ class Controller {
         vscode.window.showInformationMessage(`No ${what} to review in ${path.basename(root)}.`);
         return undefined;
       }
-      const view = gitRepoView(root);
+      const view = gitRepoView(root, stagedOnly ? INDEX : undefined);
       const ctx = await prepareContext({ files: diff.files, settings: { ...s, excludeGlobs: s.excludeGlobs }, llm, view, guideView: view, log: this.logger, signal });
       return runReview(diff.files, {
         llm,

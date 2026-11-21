@@ -109,7 +109,9 @@ export function buildReviewMessages(chunk: Chunk, ctx: PromptContext): ChatMessa
     system += `\n\nProject-specific review guidelines (follow these; they also tell you how the project works):\n${guidelines.join('\n\n')}`;
   }
   if (ctx.widened) system += `\n\n${CONTEXT_RULES}`;
-  if (ctx.checkDescription && ctx.description?.trim()) system += `\n\n${DESCRIPTION_CHECK}`;
+  // Only when one request sees the whole change: a part of a split review can't tell an unsupported claim
+  // from one supported by code in another part.
+  if (ctx.checkDescription && ctx.description?.trim() && ctx.chunkCount === 1) system += `\n\n${DESCRIPTION_CHECK}`;
 
   const parts: string[] = [];
   if (ctx.title) parts.push(`Change title: ${ctx.title}`);

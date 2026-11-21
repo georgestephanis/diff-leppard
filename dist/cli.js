@@ -107,7 +107,7 @@ Model server (override config files):
       --concurrency <n>
       --min-severity <s>    critical | major | minor | nit
       --verify <mode>       Second look at findings before reporting: off | critical-major (default) | all
-      --no-context          Hunks only: no whole files, related code or AGENTS.md fallback
+      --no-context          Hunks only: no whole files, related code or AGENTS.md fallback (instructionsFile still applies)
       --agentic             Experimental: the model may read files and search the repo (needs tool calling)
 
 Watch:

@@ -48,7 +48,7 @@ Set `model` to the name the server knows. If you leave it empty and the server h
 | API key | *Set LLM API Key* command (secret storage) | `apiKey` | `DIFF_LEPPARD_API_KEY` | `api-key` |
 | Extra request fields | `diffLeppard.extraBody` | `extraBody` | `DIFF_LEPPARD_EXTRA_BODY` | `extra-body` |
 | Extra headers | `diffLeppard.extraHeaders` | `extraHeaders` | `DIFF_LEPPARD_EXTRA_HEADERS` | `extra-headers` |
-| Diff chars per request (default: auto) | `diffLeppard.maxChunkChars` | `maxChunkChars` | `DIFF_LEPPARD_MAX_CHUNK_CHARS` | `max-chunk-chars` |
+| Characters per request (default: auto) | `diffLeppard.maxChunkChars` | `maxChunkChars` | `DIFF_LEPPARD_MAX_CHUNK_CHARS` | `max-chunk-chars` |
 
 The full list is in [Settings reference](#settings-reference).
 
@@ -74,9 +74,9 @@ A diff alone hides many real problems: a new CSS rule that ties with one 150 lin
 1. **Review guidelines**: `instructionsFile`, or else the first of `instructionsFallback` that exists (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `CONTRIBUTING.md`). Long guides are trimmed to their headings plus the sections about reviews, tests, deploys and data. Up to `maxInstructionsChars`, and at most 15% of the request.
 2. **Surrounding code**: each changed file is shown whole when it fits in `fullFileMaxChars` (and 80% of the room left for the diff). Bigger files get their hunks widened by as many lines as fit. Unchanged lines are marked as context; comments still land on changed lines.
 3. **Related code**: names the change uses (functions, CSS classes, flags, constants) are searched for in the rest of the repo, and folders it names are listed with their README and the last commit that touched them. Other files come first, then docs and tests. Up to `relatedMaxChars`, at most 20% of the request. This needs the reviewed commit locally: local reviews always have it, and `pr` does when run from a clone that has fetched the PR head.
-4. **Description check**: the PR description (for `local --range` and `--base`, the commit messages) is checked against the diff, and claims the code doesn't support are reported (`checkDescription`).
+4. **Description check**: the PR description (for `local --range` and `--base`, the commit messages) is checked against the diff, and claims the code doesn't support are reported (`checkDescription`). This only happens when the whole change fits in one request, since a part of a split review can't see the code that might back a claim.
 
-With a small context window these shrink so the diff keeps most of the room; with a large one they fill up to their caps. `--no-context` turns 1–3 off.
+With a small context window these shrink so the diff keeps most of the room; with a large one they fill up to their caps. `maxChunkChars`, automatic or set by you, is the size of one whole request, so guidelines and related code come out of it too. `--no-context` turns off whole files, related code and the `AGENTS.md` fallback; a configured `instructionsFile` is still used, as before.
 
 After the review, critical and major findings get a **second look** (`verifyFindings`): a separate request with the code around the finding must confirm it and quote the lines that prove it. Rejected findings are dropped (listed in `-v` output and in JSON as `rejectedFindings`); findings it can't decide are kept one severity lower. Set `verifyFindings` to `all` to check every finding, or `off`.
 
@@ -438,7 +438,7 @@ The names below are CLI config keys:
 | `concurrency` | `1` | Parallel requests (2–4 is fine on vLLM) |
 | `ollamaNumCtx` | `16384` | |
 | `extraHeaders`, `extraBody` | `{}` | Merged into every request |
-| `maxChunkChars` | `0` (auto) | Sized to the model's context window; see [sizing](#picking-a-model-and-sizing-the-context) |
+| `maxChunkChars` | `0` (auto) | Characters per request (diff plus guidelines and related code), sized to the model's context window; see [sizing](#picking-a-model-and-sizing-the-context) |
 | `contextLines` | `5` | Context lines in local diffs |
 | `includeUntracked` | `true` | |
 | `minimumSeverity` | `minor` | `critical`, `major`, `minor` or `nit` |

@@ -104,9 +104,14 @@ async function verifyFindings(findings, files, opts) {
                 const res = await opts.llm.chat([
                     { role: 'system', content: exports.VERIFY_SYSTEM },
                     { role: 'user', content: user },
-                ], { signal: opts.signal, schema: exports.VERIFY_SCHEMA, maxTokens: 1024 });
+                ], { signal: opts.signal, schema: exports.VERIFY_SCHEMA });
                 const v = (0, parse_1.parseJsonObject)(res.content);
-                let verdict = typeof v?.verdict === 'string' ? v.verdict.toLowerCase() : 'unsure';
+                // No usable answer (cut off, still thinking, not JSON): the check didn't happen, so keep the finding as is.
+                if (!v || typeof v.verdict !== 'string' || !['confirmed', 'rejected', 'unsure'].includes(v.verdict.toLowerCase())) {
+                    opts.log.warn(`Verification of "${f.title}" gave no usable answer${res.truncated ? ' (output cut off)' : ''}; keeping it unchanged.`);
+                    continue;
+                }
+                let verdict = v.verdict.toLowerCase();
                 const evidence = typeof v?.evidence === 'string' ? (0, markdown_1.sanitizeText)(v.evidence).trim() : '';
                 const reason = typeof v?.reason === 'string' ? (0, markdown_1.sanitizeText)(v.reason).trim() : '';
                 // A confirmation must point at real code; one that quotes code that isn't there is a misreading.
@@ -121,7 +126,9 @@ async function verifyFindings(findings, files, opts) {
                     out[i] = { ...f, verified: true, evidence: evidence || undefined };
                 }
                 else {
-                    out[i] = { ...f, severity: lower(f.severity) };
+                    // Lower one step, unless that would drop it below the reported threshold.
+                    const lowered = lower(f.severity);
+                    out[i] = { ...f, severity: (0, types_1.severityRank)(lowered) > (0, types_1.severityRank)(opts.minimumSeverity ?? 'nit') ? f.severity : lowered };
                 }
             }
             catch (e) {

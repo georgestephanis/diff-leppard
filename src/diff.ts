@@ -243,7 +243,8 @@ export function renderWithContext(f: FileDiff, content: string, radius: number):
   const added = new Set<number>();
   const delsBefore = new Map<number, string[]>();
   for (const h of f.hunks) {
-    let next = h.newStart || 1;
+    // A hunk that only removes lines (-U0) names the line *before* the removal as its start.
+    let next = h.newLines === 0 ? h.newStart + 1 : h.newStart || 1;
     for (const l of h.lines) {
       if (l.kind === 'del') {
         const at = next;
