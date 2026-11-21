@@ -1,0 +1,16 @@
+<nav class="footer-links">
+  {% for item in module.links %}
+    {% set href = item.link.url.href %}
+    <p class="footer-link">
+      {% if href %}
+        <a href="{{ href }}"
+           {% if not item.label %}aria-label="{{ item.icon.alt|escape_attr }}"{% endif %}>
+          <span class="footer-link-icon">{{ item.icon.svg }}</span>
+          <span class="footer-link-label">{{ item.label }}</span>
+        </a>
+      {% else %}
+        <span class="footer-link-label">{{ item.label }}</span>
+      {% endif %}
+    </p>
+  {% endfor %}
+</nav>

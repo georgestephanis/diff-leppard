@@ -183,6 +183,7 @@ export function serveMcp(opts: McpServerOptions): Promise<void> {
         number: ref.number,
         host,
         settings: withMinSeverity(s0, args),
+        localRoot: root,
         // The PR's base-branch config applies, but the caller's min_severity still wins.
         configure: async (repo) => {
           const l = await opts.configure(repo);

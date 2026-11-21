@@ -106,6 +106,9 @@ Model server (override config files):
       --max-chunk-chars <n>
       --concurrency <n>
       --min-severity <s>    critical | major | minor | nit
+      --verify <mode>       Second look at findings before reporting: off | critical-major (default) | all
+      --no-context          Hunks only: no whole files, related code or AGENTS.md fallback
+      --agentic             Experimental: the model may read files and search the repo (needs tool calling)
 
 Watch:
       --once                Check once and exit (for cron, systemd timers, launchd)
@@ -120,6 +123,8 @@ Other:
       --staged              (local) only staged changes
       --base <ref>          (local) everything since the merge-base with <ref>, e.g. main or origin/main
       --range <a>..<b>      (local) exactly the commits between two refs
+      --title <text>        (local) the change's title (default with --range/--base: from the commit messages)
+      --description <text>  (local) the change's description, or @file, or @- for stdin (default: commit messages)
   -h, --help
       --version
 
@@ -135,6 +140,24 @@ Environment: every setting as DIFF_LEPPARD_<UPPER_SNAKE_KEY>, e.g. DIFF_LEPPARD_
 Exit codes: 0 success · 1 findings at/above --fail-on · 2 error, or the review was incomplete (some parts failed) · 130 cancelled
 `;
 class UsageError extends Error {
+}
+/** --description: literal text, @file, or @- for stdin. */
+async function readDescription(v) {
+    if (!v.startsWith('@'))
+        return v;
+    const f = v.slice(1);
+    if (f === '-') {
+        const chunks = [];
+        for await (const c of process.stdin)
+            chunks.push(c);
+        return Buffer.concat(chunks).toString('utf8');
+    }
+    try {
+        return await fs_1.promises.readFile(f, 'utf8');
+    }
+    catch (e) {
+        throw new UsageError(`--description: can't read ${f}: ${e.message}`);
+    }
 }
 /** Version from package.json; works from dist/ (one level down) and out/src/ (two levels). */
 function packageVersion() {
@@ -246,6 +269,11 @@ async function main(argv) {
             'max-chunk-chars': { type: 'string' },
             concurrency: { type: 'string' },
             'min-severity': { type: 'string' },
+            verify: { type: 'string' },
+            agentic: { type: 'boolean' },
+            'no-context': { type: 'boolean' },
+            title: { type: 'string' },
+            description: { type: 'string' },
             repo: { type: 'string', short: 'R' },
             cwd: { type: 'string', short: 'C' },
             staged: { type: 'boolean' },
@@ -308,6 +336,9 @@ async function main(argv) {
         maxChunkChars: o['max-chunk-chars'] !== undefined ? Number(o['max-chunk-chars']) : undefined,
         concurrency: o.concurrency !== undefined ? Number(o.concurrency) : undefined,
         minimumSeverity: o['min-severity'],
+        verifyFindings: o.verify,
+        agentic: o.agentic || undefined,
+        ...(o['no-context'] ? { fullFileMaxChars: 0, relatedMaxChars: 0, instructionsFallback: [] } : {}),
     };
     if (o['extra-body']) {
         try {
@@ -475,6 +506,8 @@ async function main(argv) {
                 staged: !!o.staged,
                 base: o.base,
                 range: o.range,
+                title: o.title,
+                description: o.description === undefined ? undefined : await readDescription(o.description),
                 log,
                 signal: ac.signal,
                 onProgress: (m) => progress.update(m),
@@ -517,6 +550,7 @@ async function main(argv) {
                 host,
                 settings: s,
                 configure,
+                localRoot: root,
                 log,
                 signal: ac.signal,
                 onProgress: (m) => progress.update(m),

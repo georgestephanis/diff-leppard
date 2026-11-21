@@ -33,7 +33,7 @@ Settings live in `~/.config/diff-leppard/config.json`. The keys match the VS Cod
 ```
 
 - **Ask the user** for the server URL, model and key. Never guess them, and never print the key back.
-- **Credentials belong in the user config or `DIFF_LEPPARD_*` environment variables.** Never put them in a repo file: `.diff-leppard.json` in a repo may only hold review preferences (`model`, `minimumSeverity`, `excludeGlobs`, `extraInstructions`, `instructionsFile`, `maxChunkChars`, `contextLines`, `includeUntracked`, `temperature`).
+- **Credentials belong in the user config or `DIFF_LEPPARD_*` environment variables.** Never put them in a repo file: `.diff-leppard.json` in a repo may only hold review preferences (`model`, `minimumSeverity`, `excludeGlobs`, `extraInstructions`, `instructionsFile`, `maxChunkChars`, `contextLines`, `includeUntracked`, `temperature`, `instructionsFallback`, `maxInstructionsChars`, `fullFileMaxChars`, `relatedMaxChars`, `checkDescription`).
 - **Ollama:** use `"provider": "ollama"` with `"baseUrl": "http://host:11434"`, so `num_ctx` is set (`ollamaNumCtx`).
 - **Reasoning models** (Qwen3-style on vLLM/SGLang) are many times faster with `extraBody: {"chat_template_kwargs": {"enable_thinking": false}}`. For Ollama, use `{"think": false}`.
 - **Chunk size is automatic** (`maxChunkChars: 0`): it's sized to the context window the server reports. Only set it if the server misreports its context.

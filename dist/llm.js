@@ -1,10 +1,14 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MAX_AUTO_CHUNK_CHARS = exports.FALLBACK_CHUNK_CHARS = exports.LlmClient = exports.LlmError = void 0;
+exports.MAX_AUTO_CHUNK_CHARS = exports.FALLBACK_CHUNK_CHARS = exports.LlmClient = exports.LlmError = exports.ToolsUnsupportedError = void 0;
 exports.findRepetitionLoop = findRepetitionLoop;
 exports.healthCheck = healthCheck;
 exports.resolveChunkChars = resolveChunkChars;
 const types_1 = require("./types");
+/** The server doesn't do tool calling (or not with this model / parser). */
+class ToolsUnsupportedError extends Error {
+}
+exports.ToolsUnsupportedError = ToolsUnsupportedError;
 class LlmError extends Error {
     status;
     body;
@@ -121,6 +125,90 @@ class LlmClient {
             }
             throw e;
         }
+    }
+    /**
+     * One non-streaming request that may call tools. Returns either tool calls to run or a final answer.
+     * Throws ToolsUnsupportedError when the server rejects tools.
+     */
+    async chatTools(messages, tools, opts = {}) {
+        const ollama = this.cfg.provider === 'ollama';
+        const wireTools = tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }));
+        const wireMessages = messages.map((m) => {
+            const o = { role: m.role, content: m.content };
+            if (m.tool_calls?.length) {
+                o.tool_calls = m.tool_calls.map((c) => ollama
+                    ? { function: { name: c.name, arguments: c.args } }
+                    : { id: c.id, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args) } });
+            }
+            if (m.role === 'tool') {
+                if (ollama)
+                    o.tool_name = m.name;
+                else
+                    o.tool_call_id = m.tool_call_id;
+            }
+            return o;
+        });
+        const url = ollama ? `${this.base()}/api/chat` : `${this.base()}/chat/completions`;
+        const extra = { ...(this.cfg.extraBody ?? {}) };
+        let body;
+        if (ollama) {
+            const extraOptions = extra.options ?? {};
+            delete extra.options;
+            body = {
+                model: this.cfg.model,
+                messages: wireMessages,
+                tools: wireTools,
+                stream: false,
+                ...extra,
+                options: { temperature: this.cfg.temperature, num_ctx: this.cfg.ollamaNumCtx, num_predict: opts.maxTokens ?? this.cfg.maxOutputTokens, ...extraOptions },
+            };
+        }
+        else {
+            body = {
+                model: this.cfg.model,
+                messages: wireMessages,
+                tools: wireTools,
+                tool_choice: 'auto',
+                temperature: this.cfg.temperature,
+                max_tokens: opts.maxTokens ?? this.cfg.maxOutputTokens,
+                stream: false,
+                ...extra,
+            };
+        }
+        this.log.debug(`POST ${url} model=${this.cfg.model} tools=${tools.length} messages=${messages.length}`);
+        let res;
+        try {
+            res = await this.request(url, { method: 'POST', body: JSON.stringify(body) }, opts.signal);
+        }
+        catch (e) {
+            if (e instanceof LlmError && (e.status === 400 || e.status === 422 || e.status === 501) && /tool|function/i.test(e.body ?? e.message)) {
+                throw new ToolsUnsupportedError(e.message);
+            }
+            throw e;
+        }
+        const json = (await res.json());
+        const msg = ollama ? json.message : json.choices?.[0]?.message;
+        const truncated = ollama ? json.done_reason === 'length' : json.choices?.[0]?.finish_reason === 'length';
+        const toolCalls = [];
+        for (const [i, c] of (msg?.tool_calls ?? []).entries()) {
+            const fn = c?.function ?? {};
+            let args = {};
+            if (typeof fn.arguments === 'string') {
+                try {
+                    const a = JSON.parse(fn.arguments || '{}');
+                    if (a && typeof a === 'object')
+                        args = a;
+                }
+                catch {
+                    /* unparseable: run with no args, the tool reports what's missing */
+                }
+            }
+            else if (fn.arguments && typeof fn.arguments === 'object')
+                args = fn.arguments;
+            if (typeof fn.name === 'string')
+                toolCalls.push({ id: typeof c.id === 'string' ? c.id : `call_${i}_${Date.now()}`, name: fn.name, args });
+        }
+        return { content: typeof msg?.content === 'string' ? msg.content : '', toolCalls, truncated };
     }
     async chatOnce(messages, mode, opts) {
         return this.cfg.provider === 'ollama' ? this.chatOllama(messages, mode, opts) : this.chatOpenAI(messages, mode, opts);

@@ -188,9 +188,11 @@ export function addedLines(file: FileDiff): Set<number> {
 // Annotation & chunking for the model
 // ---------------------------------------------------------------------------
 
-function fileHeader(f: FileDiff, continued = false): string {
+function fileHeader(f: FileDiff, continued = false, view?: 'whole' | 'widened'): string {
   let desc: string = f.status;
   if (f.status === 'renamed' && f.oldPath) desc = `renamed from ${f.oldPath}`;
+  if (view === 'whole') desc += ', whole file';
+  else if (view === 'widened') desc += ', with surrounding code';
   return `=== File: ${f.path} (${desc}${continued ? ', continued' : ''}) ===`;
 }
 
@@ -210,6 +212,87 @@ function annotateHunkLines(h: Hunk, lines: DiffLine[], continued: boolean): stri
 
 export function annotateFile(f: FileDiff): string {
   return [fileHeader(f), ...f.hunks.map((h) => annotateHunkLines(h, h.lines, false))].join('\n');
+}
+
+// Whole files / widened hunks (when the new version's text is loaded, see context.ts)
+
+function splitLines(text: string): string[] {
+  const t = text.replace(/\r\n/g, '\n');
+  return (t.endsWith('\n') ? t.slice(0, -1) : t).split('\n');
+}
+
+/** Sanity check: every added and context line in the diff is where the file says it is. */
+export function contentMatchesDiff(f: FileDiff, text: string): boolean {
+  const lines = splitLines(text);
+  for (const h of f.hunks) {
+    for (const l of h.lines) {
+      if (l.newLine === undefined) continue;
+      if ((lines[l.newLine - 1] ?? '').replace(/\r$/, '') !== l.text.replace(/\r$/, '')) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Render a changed file with `radius` lines of context around each hunk (Infinity = the whole file), in the
+ * same "<line> <marker> <code>" format as the diff. Removed lines are shown where they were.
+ */
+export function renderWithContext(f: FileDiff, content: string, radius: number): string {
+  const lines = splitLines(content);
+  const n = lines.length;
+  const added = new Set<number>();
+  const delsBefore = new Map<number, string[]>();
+  for (const h of f.hunks) {
+    let next = h.newStart || 1;
+    for (const l of h.lines) {
+      if (l.kind === 'del') {
+        const at = next;
+        if (!delsBefore.has(at)) delsBefore.set(at, []);
+        delsBefore.get(at)!.push(l.text);
+      } else if (l.newLine !== undefined) {
+        if (l.kind === 'add') added.add(l.newLine);
+        next = l.newLine + 1;
+      }
+    }
+  }
+  // Windows to show, merged.
+  const wins: [number, number][] = [];
+  if (!Number.isFinite(radius)) wins.push([1, n]);
+  else {
+    for (const h of f.hunks) {
+      const a = Math.max(1, h.newStart - radius);
+      const b = Math.min(n, h.newStart + Math.max(h.newLines, 1) - 1 + radius);
+      const last = wins[wins.length - 1];
+      if (last && a <= last[1] + 1) last[1] = Math.max(last[1], b);
+      else wins.push([a, b]);
+    }
+  }
+  const width = Math.max(4, String(n).length);
+  const out: string[] = [];
+  for (const [a, b] of wins) {
+    out.push(Number.isFinite(radius) ? `@@ lines ${a}-${b} @@` : `@@ whole file, ${n} lines @@`);
+    for (let i = a; i <= b + 1; i++) {
+      for (const d of delsBefore.get(i) ?? []) out.push(`${' '.repeat(width)} - ${d}`);
+      if (i > b || i > n) break;
+      out.push(`${String(i).padStart(width)} ${added.has(i) ? '+' : ' '} ${lines[i - 1]}`);
+    }
+  }
+  return out.join('\n');
+}
+
+const RADII = [Infinity, 400, 200, 120, 80, 50, 30];
+
+/**
+ * The richest rendering of a changed file that fits in maxChars: the whole file, else hunks widened by as
+ * many lines as fit. Undefined if the file's content isn't loaded or even modest widening doesn't fit.
+ */
+export function renderFileContext(f: FileDiff, maxChars: number): { text: string; whole: boolean } | undefined {
+  if (!f.content || maxChars <= 0) return undefined;
+  for (const r of RADII) {
+    const text = renderWithContext(f, f.content, r);
+    if (text.length <= maxChars) return { text, whole: !Number.isFinite(r) };
+  }
+  return undefined;
 }
 
 export interface Chunk {
@@ -260,7 +343,7 @@ function fileSegments(f: FileDiff, maxChars: number): Segment[] {
  * Pack files into chunks of at most `maxChars` characters of annotated diff.
  * Small files are grouped together; big files are split at hunk (or line) boundaries.
  */
-export function chunkDiff(files: FileDiff[], maxChars: number): Chunk[] {
+export function chunkDiff(files: FileDiff[], maxChars: number, opts: { contextChars?: number } = {}): Chunk[] {
   const chunks: Chunk[] = [];
   let parts: string[] = [];
   let chunkFiles: FileDiff[] = [];
@@ -278,8 +361,11 @@ export function chunkDiff(files: FileDiff[], maxChars: number): Chunk[] {
 
   for (const f of files) {
     if (!f.hunks.length) continue;
-    const header = fileHeader(f);
-    const segs = fileSegments(f, maxChars - header.length - 40);
+    // With the file's content loaded, show the whole file (or the hunks widened by as much as fits) as one
+    // segment; otherwise the plain hunks.
+    const ctx = opts.contextChars ? renderFileContext(f, Math.min(opts.contextChars, maxChars - 200)) : undefined;
+    const header = fileHeader(f, false, ctx ? (ctx.whole ? 'whole' : 'widened') : undefined);
+    const segs = ctx ? [{ file: f, text: ctx.text }] : fileSegments(f, maxChars - header.length - 40);
     let firstSeg = true;
     for (const seg of segs) {
       const needHeader = lastFile !== f;

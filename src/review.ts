@@ -1,5 +1,9 @@
+import type { VerifyMode } from './config';
+import { RelatedSnippet, renderRelated } from './context';
+import { verifyFindings } from './verify';
 import { addedLines, Chunk, chunkDiff, commentableLines } from './diff';
-import { LlmClient, LlmError } from './llm';
+import { agenticReply, AgentOptions } from './agent';
+import { ChatResult, LlmClient, LlmError, ToolsUnsupportedError } from './llm';
 import { sanitizeText } from './markdown';
 import { parseModelOutput, RawFinding } from './parse';
 import { buildReviewMessages, buildSynthesisMessages, PromptContext, REVIEW_JSON_SCHEMA } from './prompt';
@@ -18,6 +22,18 @@ export interface ReviewOptions {
   onProgress?: (message: string, increment?: number) => void;
   /** Files already skipped by the caller (e.g. too large), carried into the result. */
   preSkipped?: { path: string; reason: string }[];
+  /** Show changed files whole (or with widened context) when they fit in this many characters; needs FileDiff.content. */
+  contextChars?: number;
+  /** Related code per changed file (see context.ts). */
+  related?: Map<string, RelatedSnippet[]>;
+  /** Characters reserved for related code in every request, and the most it may use when the diff leaves room. */
+  relatedChars?: { reserve: number; max: number };
+  /** Lines describing the extra context used, copied into the result. */
+  contextNotes?: string[];
+  /** Second look at findings before reporting them (default off here; the CLI and extension default to 'critical-major'). */
+  verify?: VerifyMode;
+  /** Experimental agentic mode: read-only tools for the model (the tool-output budget is set per request). */
+  agent?: Omit<AgentOptions, 'budgetChars'>;
 }
 
 export class CancelledError extends Error {
@@ -64,7 +80,8 @@ export async function runReview(files: FileDiff[], opts: ReviewOptions): Promise
     return result;
   }
 
-  const chunks = chunkDiff(included, opts.maxChunkChars);
+  const chunks = chunkDiff(included, opts.maxChunkChars, { contextChars: opts.contextChars });
+  if (opts.contextNotes?.length) result.contextNotes = [...opts.contextNotes];
   result.chunkCount = chunks.length;
   opts.log.info(`Reviewing ${included.length} file(s) in ${chunks.length} chunk(s) with ${opts.llm.model}`);
   for (const s of skipped) opts.log.info(`  skipped ${s.path}: ${s.reason}`);
@@ -101,13 +118,30 @@ export async function runReview(files: FileDiff[], opts: ReviewOptions): Promise
   }
 
   const minRank = severityRank(opts.minimumSeverity);
-  const all = dedupe(findings.flat()).filter((f) => severityRank(f.severity) <= minRank);
+  let all = dedupe(findings.flat()).filter((f) => severityRank(f.severity) <= minRank);
   all.sort(
     (a, b) =>
       severityRank(a.severity) - severityRank(b.severity) ||
       a.file.localeCompare(b.file) ||
       (a.line ?? 0) - (b.line ?? 0),
   );
+  if (opts.verify && opts.verify !== 'off' && all.length) {
+    opts.onProgress?.('Verifying findings…');
+    const v = await verifyFindings(all, included, {
+      llm: opts.llm,
+      mode: opts.verify,
+      maxChars: opts.maxChunkChars,
+      concurrency: opts.concurrency,
+      log: opts.log,
+      signal: opts.signal,
+    });
+    if (opts.signal?.aborted) throw new CancelledError();
+    all = v.kept.filter((f) => severityRank(f.severity) <= minRank);
+    if (v.rejected.length) {
+      result.rejectedFindings = v.rejected;
+      opts.log.info(`Verification rejected ${v.rejected.length} finding(s): ${v.rejected.map((f) => f.title).join('; ')}`);
+    }
+  }
   result.findings = all;
   const dropped = findings.flat().length - all.length;
   if (dropped > 0) opts.log.info(`Dropped ${dropped} finding(s) below '${opts.minimumSeverity}' severity or duplicated`);
@@ -137,6 +171,9 @@ export async function runReview(files: FileDiff[], opts: ReviewOptions): Promise
   return result;
 }
 
+/** Clients whose server rejected tool calling: don't try again this session. */
+const agentUnsupported = new WeakSet<LlmClient>();
+
 async function reviewChunk(
   chunk: Chunk,
   index: number,
@@ -144,9 +181,31 @@ async function reviewChunk(
   opts: ReviewOptions,
   onChars: (n: number) => void,
 ): Promise<{ summary?: string; findings: Finding[] }> {
-  const messages = buildReviewMessages(chunk, { ...opts.context, chunkIndex: index, chunkCount: count });
+  let related: string | undefined;
+  if (opts.related?.size && opts.relatedChars) {
+    // Related code gets its reserve plus whatever room the diff didn't use, up to the configured cap.
+    const { reserve, max } = opts.relatedChars;
+    const room = Math.min(max, reserve + Math.max(0, opts.maxChunkChars - chunk.text.length));
+    related = renderRelated(chunk.files.flatMap((f) => opts.related!.get(f.path) ?? []), room) || undefined;
+  }
+  const widened = /^=== File: .*(whole file|with surrounding code)/m.test(chunk.text);
+  const messages = buildReviewMessages(chunk, { ...opts.context, related, widened, chunkIndex: index, chunkCount: count });
   opts.log.debug(`--- prompt part ${index + 1}/${count} (${messages.map((m) => m.content.length).reduce((a, b) => a + b)} chars) ---`);
-  let res = await opts.llm.chat(messages, { signal: opts.signal, schema: REVIEW_JSON_SCHEMA, onProgress: onChars });
+  let res: ChatResult | undefined;
+  if (opts.agent && !agentUnsupported.has(opts.llm)) {
+    // Tool output may use whatever room this request's diff and related code left, but at least a few KB.
+    const budgetChars = Math.max(4000, opts.maxChunkChars - chunk.text.length);
+    try {
+      const a = await agenticReply(opts.llm, messages, { ...opts.agent, budgetChars }, opts.log, opts.signal);
+      opts.log.info(`Part ${index + 1}: ${a.toolCalls} tool call(s), ${a.toolChars} chars of tool output`);
+      res = { content: a.content, truncated: false };
+    } catch (e) {
+      if (!(e instanceof ToolsUnsupportedError)) throw e;
+      agentUnsupported.add(opts.llm);
+      opts.log.warn(`Agentic mode needs tool calling, which the server rejected (${e.message}). Reviewing without tools.`);
+    }
+  }
+  res ??= await opts.llm.chat(messages, { signal: opts.signal, schema: REVIEW_JSON_SCHEMA, onProgress: onChars });
   opts.log.debug(`--- raw model output part ${index + 1} ---\n${res.content}`);
   if (res.runaway) opts.log.warn(`Part ${index + 1}: the model started repeating itself and was stopped; salvaging what parsed.`);
   else if (res.truncated) opts.log.warn(`Part ${index + 1}: output hit maxOutputTokens and was cut off; salvaging what parsed.`);

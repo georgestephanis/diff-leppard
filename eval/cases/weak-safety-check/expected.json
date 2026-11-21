@@ -1,0 +1,45 @@
+{
+ "title": "'Stale' also matches pages that are published but flagged, and the 'new' guard already existed",
+ "expected": [
+  {
+   "id": "flagged-unpublished",
+   "severity": "major",
+   "file": "scripts/sync_pages.py",
+   "lines": [
+    24,
+    36
+   ],
+   "keywords": [
+    "needs_review",
+    "needs review",
+    "flagged",
+    "draft",
+    "not ready",
+    "not \"ready\"",
+    "empty",
+    "every page",
+    "all pages",
+    "cap",
+    "limit"
+   ]
+  },
+  {
+   "id": "desc-overclaim",
+   "severity": "minor",
+   "file": "scripts/sync_pages.py",
+   "lines": [
+    10,
+    36
+   ],
+   "keywords": [
+    "description",
+    "already",
+    "existed",
+    "not new",
+    "empty",
+    "claim"
+   ]
+  }
+ ],
+ "traps": []
+}

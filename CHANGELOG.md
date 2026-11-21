@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **More context per review, sized from the model's context window.** Each request now carries more than the diff hunks, within one budget, so a bigger context window buys more context and a small one degrades to plain hunks. See [What the model sees](README.md#what-the-model-sees).
+  - Changed files are shown whole when they fit (`fullFileMaxChars`), otherwise with hunks widened by as many lines as fit (#30).
+  - Related code: names the change uses are searched for elsewhere in the repo, and folders it names are listed with their README and last commit (`relatedMaxChars`, #31).
+  - `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md` or `CONTRIBUTING.md` is used as review guidelines when `instructionsFile` doesn't exist, trimmed to the sections that matter (`instructionsFallback`, `maxInstructionsChars`, #34).
+  - The change description's claims are checked against the diff (`checkDescription`, #33). `local --range` and `--base` use the commit messages as the description; `--title` and `--description` set them explicitly.
+- **Verification pass** (`verifyFindings`, default `critical-major`, `--verify`): each serious finding gets a second request that must confirm it and quote the code. Rejected findings are dropped and listed as `rejectedFindings` in JSON (#32).
+- **Experimental `--agentic` mode**: the model may call read-only `read_file`, `grep` and `list_dir` tools, confined to the repo at the reviewed commit, with a call and output budget. Falls back to a normal review when the server doesn't do tool calling (#35).
+- **Evaluation set:** `npm run eval` runs small cases with known answers and traps and reports recall, false positives and time (#29). See `eval/README.md`.
+- `--no-context` reviews hunks only, as before.
+
 ## 1.3.0 (2026-11-10)
 
 1.2.0 was a quiet pre-release, so this is the first full release with its changes too: `diff-leppard watch`, SARIF and reviewdog output, and stopping runaway replies early. See [1.2.0 in the changelog](https://github.com/georgestephanis/diff-leppard/blob/main/CHANGELOG.md#120-2026-11-09).

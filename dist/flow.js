@@ -37,11 +37,14 @@ exports.ReviewInputError = void 0;
 exports.llmBase = llmBase;
 exports.makeLlm = makeLlm;
 exports.reviewPullRequest = reviewPullRequest;
+exports.prepareContext = prepareContext;
+exports.commitMessages = commitMessages;
 exports.defaultRepo = defaultRepo;
 exports.reviewLocalChanges = reviewLocalChanges;
 /** End-to-end review flows shared by the CLI's `pr` and `watch` commands (no `vscode` imports). */
 const config_1 = require("./config");
 const path = __importStar(require("path"));
+const context_1 = require("./context");
 const diff_1 = require("./diff");
 const gh_1 = require("./gh");
 const git_1 = require("./git");
@@ -105,15 +108,37 @@ async function reviewPullRequest(p) {
                 p.log.warn(w);
         }
     }
-    const loaded = await (0, pr_1.loadPullRequest)(p.client, p.repo, p.number, s.instructionsFile, p.log, pr0);
+    // Guidelines come from prepareContext (base branch, with the AGENTS.md fallback), not loadPullRequest.
+    const loaded = await (0, pr_1.loadPullRequest)(p.client, p.repo, p.number, undefined, p.log, pr0);
     const llm = await makeLlm(s, p.log);
+    // A local checkout that has the PR's head commit allows searching the repo; otherwise read through the API.
+    const local = await (0, context_1.localViewAt)(p.localRoot, loaded.pr.headSha);
+    const ctx = await prepareContext({
+        files: loaded.files,
+        settings: s,
+        llm,
+        view: local ?? (loaded.pr.headSha ? (0, context_1.githubRepoView)(p.client, p.repo, loaded.pr.headSha) : undefined),
+        guideView: (await (0, context_1.localViewAt)(p.localRoot, loaded.pr.baseSha)) ?? (loaded.pr.baseSha ? (0, context_1.githubRepoView)(p.client, p.repo, loaded.pr.baseSha) : undefined),
+        log: p.log,
+        signal: p.signal,
+    });
+    if (s.agentic && !local)
+        p.log.warn('Agentic mode needs a local clone that has the PR head commit (run from a checkout and fetch it); reviewing without tools.');
     const result = await (0, review_1.runReview)(loaded.files, {
         llm,
-        maxChunkChars: await (0, llm_1.resolveChunkChars)(llm, s.maxChunkChars, s.maxOutputTokens, p.log, p.signal),
+        ...ctx,
         concurrency: s.concurrency,
         minimumSeverity: s.minimumSeverity,
         exclude: (0, diff_1.makeExcluder)(s.excludeGlobs),
-        context: { title: loaded.pr.title, description: loaded.pr.body, extraInstructions: s.extraInstructions, repoInstructions: loaded.repoInstructions },
+        verify: s.verifyFindings,
+        agent: s.agentic && local ? { view: local, before: await (0, context_1.localViewAt)(p.localRoot, loaded.pr.baseSha), maxToolCalls: s.maxToolCalls, exclude: (0, diff_1.makeExcluder)(s.excludeGlobs) } : undefined,
+        context: {
+            title: loaded.pr.title,
+            description: loaded.pr.body,
+            checkDescription: s.checkDescription,
+            extraInstructions: s.extraInstructions,
+            repoInstructions: ctx.repoInstructions,
+        },
         log: p.log,
         signal: p.signal,
         onProgress: p.onProgress,
@@ -127,6 +152,60 @@ async function reviewPullRequest(p) {
         blobBaseUrl: `https://${p.host}/${p.repo.owner}/${p.repo.repo}/blob/${pr.headSha}`,
     });
     return { pr, result, settings: s, title, markdown };
+}
+async function prepareContext(p) {
+    const s = p.settings;
+    const total = await (0, llm_1.resolveChunkChars)(p.llm, s.maxChunkChars, s.maxOutputTokens, p.log, p.signal);
+    const plan = (0, context_1.planBudget)(total, s);
+    const notes = [];
+    let repoInstructions;
+    if (p.guideView && plan.instructions > 0) {
+        const g = await (0, context_1.loadGuidelines)(p.guideView, s.instructionsFile, s.instructionsFallback, plan.instructions, p.log);
+        if (g) {
+            repoInstructions = g.text;
+            notes.push(`guidelines: ${g.source} (${g.text.length} chars)`);
+        }
+    }
+    const used = (repoInstructions?.length ?? 0) + (s.relatedMaxChars > 0 && p.view?.grep ? plan.related : 0);
+    const maxChunkChars = Math.max(2000, total - used);
+    const contextChars = Math.min(plan.fullFile, Math.floor(maxChunkChars * 0.8));
+    if (p.view && contextChars > 0) {
+        await (0, context_1.attachFileContents)(p.files, p.view, contextChars, p.log);
+        const loaded = p.files.filter((f) => f.content).length;
+        if (loaded)
+            notes.push(`surrounding code: up to ${contextChars} chars per file, ${loaded} file(s) loaded`);
+    }
+    let related;
+    if (p.view && s.relatedMaxChars > 0 && plan.related > 0) {
+        if (!p.view.grep)
+            p.log.info(`context: related-code search needs a local checkout of the reviewed commit; skipped (${p.view.describe})`);
+        else {
+            related = await (0, context_1.findRelatedCode)(p.files, p.view, { exclude: (0, diff_1.makeExcluder)(s.excludeGlobs), log: p.log });
+            for (const [f, sn] of related)
+                notes.push(`related to ${f}: ${sn.map((x) => `${x.path} (${x.reason})`).join('; ')}`);
+        }
+    }
+    p.log.info(`Request budget ${total} chars: diff ${maxChunkChars}, guidelines ${repoInstructions?.length ?? 0}, related up to ${s.relatedMaxChars ? plan.related : 0}+`);
+    return { maxChunkChars, contextChars, related, relatedChars: { reserve: plan.related, max: s.relatedMaxChars }, contextNotes: notes, repoInstructions };
+}
+/** Commit messages of a range as a change title + description (at most 20 commits / 4000 chars). */
+async function commitMessages(root, range) {
+    if (!range || range.startsWith('-'))
+        return undefined;
+    const out = await (0, git_1.git)(root, ['log', '--no-merges', '-n', '20', '--format=%s%x1f%b%x1e', range, '--'], true);
+    const commits = out
+        .split('\x1e')
+        .map((c) => c.trim())
+        .filter(Boolean)
+        .map((c) => {
+        const [subject, body = ''] = c.split('\x1f');
+        return { subject: subject.trim(), body: body.trim() };
+    });
+    if (!commits.length)
+        return undefined;
+    if (commits.length === 1)
+        return { title: commits[0].subject, description: commits[0].body.slice(0, 4000) };
+    return { description: commits.map((c) => `- ${c.subject}${c.body ? `\n  ${c.body.replace(/\n/g, '\n  ')}` : ''}`).join('\n').slice(0, 4000) };
 }
 /** A problem with what was asked for (bad ref, not a repo, …), as opposed to a failure while reviewing. */
 class ReviewInputError extends Error {
@@ -191,17 +270,40 @@ async function reviewLocalChanges(p) {
     }
     if (!diff.files.length)
         return { what, title, markdown: () => `No ${what} in ${name}.\n` };
-    const repoInstructions = s.instructionsFile ? await (0, git_1.readRepoFile)(p.root, s.instructionsFile) : undefined;
-    if (repoInstructions)
-        p.log.info(`Using review guidelines from ${s.instructionsFile}`);
     const llm = await makeLlm(s, p.log);
+    // The reviewed revision: the range's end commit, else the working tree. Guidelines come from the range's
+    // start (like a PR's base), else the working tree.
+    const toSha = range ? await (0, git_1.resolveRef)(p.root, range.to) : undefined;
+    const fromSha = range && !(0, git_1.isNullSha)(range.from) ? await (0, git_1.resolveRef)(p.root, range.from).catch(() => undefined) : undefined;
+    const ctx = await prepareContext({
+        files: diff.files,
+        settings: s,
+        llm,
+        view: (0, context_1.gitRepoView)(p.root, toSha),
+        guideView: (0, context_1.gitRepoView)(p.root, fromSha ?? toSha),
+        log: p.log,
+        signal: p.signal,
+    });
+    let changeTitle = p.title;
+    let changeDescription = p.description;
+    if (changeDescription === undefined && (range || p.base)) {
+        const msgs = await commitMessages(p.root, range ? (fromSha ? `${fromSha}..${toSha}` : toSha) : `${p.base}...HEAD`);
+        if (msgs) {
+            changeTitle ??= msgs.title;
+            changeDescription = msgs.description;
+        }
+    }
     const result = await (0, review_1.runReview)(diff.files, {
         llm,
-        maxChunkChars: await (0, llm_1.resolveChunkChars)(llm, s.maxChunkChars, s.maxOutputTokens, p.log, p.signal),
+        ...ctx,
         concurrency: s.concurrency,
         minimumSeverity: s.minimumSeverity,
         exclude,
-        context: { extraInstructions: s.extraInstructions, repoInstructions },
+        verify: s.verifyFindings,
+        agent: s.agentic
+            ? { view: (0, context_1.gitRepoView)(p.root, toSha), before: fromSha ? (0, context_1.gitRepoView)(p.root, fromSha) : range ? undefined : (0, context_1.gitRepoView)(p.root, 'HEAD'), maxToolCalls: s.maxToolCalls, exclude }
+            : undefined,
+        context: { title: changeTitle, description: changeDescription, checkDescription: s.checkDescription, extraInstructions: s.extraInstructions, repoInstructions: ctx.repoInstructions },
         log: p.log,
         signal: p.signal,
         onProgress: p.onProgress,

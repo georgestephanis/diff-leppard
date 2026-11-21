@@ -156,3 +156,18 @@ export function parseModelOutput(raw: string): ParsedOutput {
   if (summary !== undefined || findings.length) return { summary, findings, ok: true, partial: true };
   return { findings: [], ok: false, partial: false };
 }
+
+/** The first JSON object in a reply (after reasoning, fences and chatter), for small structured answers. */
+export function parseJsonObject(raw: string): Record<string, unknown> | undefined {
+  const text = stripThinking(raw);
+  for (const candidate of [...fencedBlocks(text), text]) {
+    const t = candidate.trim();
+    const direct = tryParse(t);
+    if (direct && typeof direct === 'object' && !Array.isArray(direct)) return direct as Record<string, unknown>;
+    for (const s of scanObjects(t)) {
+      const o = tryParse(s);
+      if (o && typeof o === 'object' && !Array.isArray(o)) return o as Record<string, unknown>;
+    }
+  }
+  return undefined;
+}

@@ -7,7 +7,10 @@ exports.normalizeSeverity = normalizeSeverity;
 exports.cleanPath = cleanPath;
 exports.mapLines = mapLines;
 exports.normalizeFindings = normalizeFindings;
+const context_1 = require("./context");
+const verify_1 = require("./verify");
 const diff_1 = require("./diff");
+const agent_1 = require("./agent");
 const llm_1 = require("./llm");
 const markdown_1 = require("./markdown");
 const parse_1 = require("./parse");
@@ -57,7 +60,9 @@ async function runReview(files, opts) {
         result.durationMs = Date.now() - started;
         return result;
     }
-    const chunks = (0, diff_1.chunkDiff)(included, opts.maxChunkChars);
+    const chunks = (0, diff_1.chunkDiff)(included, opts.maxChunkChars, { contextChars: opts.contextChars });
+    if (opts.contextNotes?.length)
+        result.contextNotes = [...opts.contextNotes];
     result.chunkCount = chunks.length;
     opts.log.info(`Reviewing ${included.length} file(s) in ${chunks.length} chunk(s) with ${opts.llm.model}`);
     for (const s of skipped)
@@ -91,10 +96,28 @@ async function runReview(files, opts) {
         throw new llm_1.LlmError(result.errors[0]);
     }
     const minRank = (0, types_1.severityRank)(opts.minimumSeverity);
-    const all = dedupe(findings.flat()).filter((f) => (0, types_1.severityRank)(f.severity) <= minRank);
+    let all = dedupe(findings.flat()).filter((f) => (0, types_1.severityRank)(f.severity) <= minRank);
     all.sort((a, b) => (0, types_1.severityRank)(a.severity) - (0, types_1.severityRank)(b.severity) ||
         a.file.localeCompare(b.file) ||
         (a.line ?? 0) - (b.line ?? 0));
+    if (opts.verify && opts.verify !== 'off' && all.length) {
+        opts.onProgress?.('Verifying findings…');
+        const v = await (0, verify_1.verifyFindings)(all, included, {
+            llm: opts.llm,
+            mode: opts.verify,
+            maxChars: opts.maxChunkChars,
+            concurrency: opts.concurrency,
+            log: opts.log,
+            signal: opts.signal,
+        });
+        if (opts.signal?.aborted)
+            throw new CancelledError();
+        all = v.kept.filter((f) => (0, types_1.severityRank)(f.severity) <= minRank);
+        if (v.rejected.length) {
+            result.rejectedFindings = v.rejected;
+            opts.log.info(`Verification rejected ${v.rejected.length} finding(s): ${v.rejected.map((f) => f.title).join('; ')}`);
+        }
+    }
     result.findings = all;
     const dropped = findings.flat().length - all.length;
     if (dropped > 0)
@@ -119,10 +142,36 @@ async function runReview(files, opts) {
     result.durationMs = Date.now() - started;
     return result;
 }
+/** Clients whose server rejected tool calling: don't try again this session. */
+const agentUnsupported = new WeakSet();
 async function reviewChunk(chunk, index, count, opts, onChars) {
-    const messages = (0, prompt_1.buildReviewMessages)(chunk, { ...opts.context, chunkIndex: index, chunkCount: count });
+    let related;
+    if (opts.related?.size && opts.relatedChars) {
+        // Related code gets its reserve plus whatever room the diff didn't use, up to the configured cap.
+        const { reserve, max } = opts.relatedChars;
+        const room = Math.min(max, reserve + Math.max(0, opts.maxChunkChars - chunk.text.length));
+        related = (0, context_1.renderRelated)(chunk.files.flatMap((f) => opts.related.get(f.path) ?? []), room) || undefined;
+    }
+    const widened = /^=== File: .*(whole file|with surrounding code)/m.test(chunk.text);
+    const messages = (0, prompt_1.buildReviewMessages)(chunk, { ...opts.context, related, widened, chunkIndex: index, chunkCount: count });
     opts.log.debug(`--- prompt part ${index + 1}/${count} (${messages.map((m) => m.content.length).reduce((a, b) => a + b)} chars) ---`);
-    let res = await opts.llm.chat(messages, { signal: opts.signal, schema: prompt_1.REVIEW_JSON_SCHEMA, onProgress: onChars });
+    let res;
+    if (opts.agent && !agentUnsupported.has(opts.llm)) {
+        // Tool output may use whatever room this request's diff and related code left, but at least a few KB.
+        const budgetChars = Math.max(4000, opts.maxChunkChars - chunk.text.length);
+        try {
+            const a = await (0, agent_1.agenticReply)(opts.llm, messages, { ...opts.agent, budgetChars }, opts.log, opts.signal);
+            opts.log.info(`Part ${index + 1}: ${a.toolCalls} tool call(s), ${a.toolChars} chars of tool output`);
+            res = { content: a.content, truncated: false };
+        }
+        catch (e) {
+            if (!(e instanceof llm_1.ToolsUnsupportedError))
+                throw e;
+            agentUnsupported.add(opts.llm);
+            opts.log.warn(`Agentic mode needs tool calling, which the server rejected (${e.message}). Reviewing without tools.`);
+        }
+    }
+    res ??= await opts.llm.chat(messages, { signal: opts.signal, schema: prompt_1.REVIEW_JSON_SCHEMA, onProgress: onChars });
     opts.log.debug(`--- raw model output part ${index + 1} ---\n${res.content}`);
     if (res.runaway)
         opts.log.warn(`Part ${index + 1}: the model started repeating itself and was stopped; salvaging what parsed.`);

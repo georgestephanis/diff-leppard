@@ -1,0 +1,30 @@
+{
+ "title": "A default data snapshot predates a cleanup, so the next normal run recreates deleted rows",
+ "expected": [
+  {
+   "id": "resurrection",
+   "severity": "major",
+   "file": "scripts/import_rows.py",
+   "lines": [
+    10,
+    60
+   ],
+   "keywords": [
+    "recreat",
+    "re-creat",
+    "re-import",
+    "reimport",
+    "come back",
+    "reappear",
+    "resurrect",
+    "stale",
+    "not refreshed",
+    "out of date",
+    "outdated",
+    "predate",
+    "snapshot"
+   ]
+  }
+ ],
+ "traps": []
+}

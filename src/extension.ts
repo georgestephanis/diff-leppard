@@ -1,12 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { defaultSettings } from './config';
+import { defaultSettings, VerifyMode } from './config';
+import { githubRepoView, gitRepoView, localViewAt } from './context';
+import { prepareContext } from './flow';
 import { makeExcluder } from './diff';
 import { ghExec, githubRemotes } from './gh';
-import { getHeadSha, getLocalDiff, getRepoRoot, readRepoFile } from './git';
+import { getHeadSha, getLocalDiff, getRepoRoot } from './git';
 import { GitHubClient, parsePrReference, postReview, PullRequestInfo, RepoRef, ReviewEventSetting, webHostFromApiUrl } from './github';
-import { healthCheck, JsonMode, LlmClient, LlmConfig, resolveChunkChars } from './llm';
+import { healthCheck, JsonMode, LlmClient, LlmConfig } from './llm';
 import { loadPullRequest } from './pr';
 import { renderMarkdownReport, ReportMeta } from './report';
 import { CancelledError, runReview } from './review';
@@ -26,6 +28,13 @@ interface Settings {
   excludeGlobs: string[];
   extraInstructions: string;
   instructionsFile: string;
+  instructionsFallback: string[];
+  maxInstructionsChars: number;
+  fullFileMaxChars: number;
+  relatedMaxChars: number;
+  checkDescription: boolean;
+  verifyFindings: VerifyMode;
+  maxOutputTokens: number;
   concurrency: number;
   showStatusBar: boolean;
   github: {
@@ -63,6 +72,13 @@ function readSettings(): Settings {
     excludeGlobs: c.get<string[]>('excludeGlobs', d.excludeGlobs),
     extraInstructions: c.get<string>('extraInstructions', d.extraInstructions),
     instructionsFile: c.get<string>('instructionsFile', d.instructionsFile).trim(),
+    instructionsFallback: c.get<string[]>('instructionsFallback', d.instructionsFallback),
+    maxInstructionsChars: c.get<number>('maxInstructionsChars', d.maxInstructionsChars),
+    fullFileMaxChars: c.get<number>('fullFileMaxChars', d.fullFileMaxChars),
+    relatedMaxChars: c.get<number>('relatedMaxChars', d.relatedMaxChars),
+    checkDescription: c.get<boolean>('checkDescription', d.checkDescription),
+    verifyFindings: c.get<VerifyMode>('verifyFindings', d.verifyFindings),
+    maxOutputTokens: c.get<number>('maxOutputTokens', d.maxOutputTokens),
     concurrency: c.get<number>('concurrency', d.concurrency),
     showStatusBar: c.get<boolean>('showStatusBar', true),
     github: {
@@ -378,15 +394,16 @@ class Controller {
         vscode.window.showInformationMessage(`No ${what} to review in ${path.basename(root)}.`);
         return undefined;
       }
-      const repoInstructions = s.instructionsFile ? await readRepoFile(root, s.instructionsFile) : undefined;
-      if (repoInstructions) this.log.info(`Using review guidelines from ${s.instructionsFile}`);
+      const view = gitRepoView(root);
+      const ctx = await prepareContext({ files: diff.files, settings: { ...s, excludeGlobs: s.excludeGlobs }, llm, view, guideView: view, log: this.logger, signal });
       return runReview(diff.files, {
         llm,
-        maxChunkChars: await resolveChunkChars(llm, s.maxChunkChars, s.llm.maxOutputTokens, this.logger, signal),
+        ...ctx,
         concurrency: s.concurrency,
         minimumSeverity: s.minimumSeverity,
         exclude,
-        context: { extraInstructions: s.extraInstructions, repoInstructions },
+        verify: s.verifyFindings,
+        context: { extraInstructions: s.extraInstructions, repoInstructions: ctx.repoInstructions },
         log: this.logger,
         signal,
         onProgress: report,
@@ -425,14 +442,25 @@ class Controller {
 
     const out = await this.withReviewProgress(`Diff Leppard: ${label}`, async (signal, report) => {
       report('Fetching pull request…');
-      const { pr, files, skipped, repoInstructions } = await loadPullRequest(gh, ref.repo, ref.number, s.instructionsFile, this.logger);
+      const { pr, files, skipped } = await loadPullRequest(gh, ref.repo, ref.number, undefined, this.logger);
+      const local = await localViewAt(root, pr.headSha);
+      const ctx = await prepareContext({
+        files,
+        settings: s,
+        llm,
+        view: local ?? (pr.headSha ? githubRepoView(gh, ref.repo, pr.headSha) : undefined),
+        guideView: (await localViewAt(root, pr.baseSha)) ?? (pr.baseSha ? githubRepoView(gh, ref.repo, pr.baseSha) : undefined),
+        log: this.logger,
+        signal,
+      });
       const result = await runReview(files, {
         llm,
-        maxChunkChars: await resolveChunkChars(llm, s.maxChunkChars, s.llm.maxOutputTokens, this.logger, signal),
+        ...ctx,
         concurrency: s.concurrency,
         minimumSeverity: s.minimumSeverity,
         exclude,
-        context: { title: pr.title, description: pr.body, extraInstructions: s.extraInstructions, repoInstructions },
+        verify: s.verifyFindings,
+        context: { title: pr.title, description: pr.body, checkDescription: s.checkDescription, extraInstructions: s.extraInstructions, repoInstructions: ctx.repoInstructions },
         log: this.logger,
         signal,
         onProgress: report,

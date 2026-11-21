@@ -1,0 +1,26 @@
+{
+ "title": "Fixed column plus gap leaves the other column too narrow at tablet widths",
+ "expected": [
+  {
+   "id": "tablet-squeeze",
+   "severity": "major",
+   "file": "css/signup.css",
+   "lines": [
+    22,
+    35
+   ],
+   "keywords": [
+    "769",
+    "tablet",
+    "narrow",
+    "squeez",
+    "too small",
+    "shrink",
+    "breakpoint",
+    "medium screen",
+    "990"
+   ]
+  }
+ ],
+ "traps": []
+}

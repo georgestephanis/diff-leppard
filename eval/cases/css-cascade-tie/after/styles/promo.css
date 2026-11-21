@@ -1,0 +1,208 @@
+.promo {
+  display: block;
+  margin: 0 auto;
+}
+
+.promo .promo-inner {
+  padding: 24px;
+}
+
+/* Full-width promos run edge to edge: no inner padding. */
+.promo.is-full .promo-inner {
+  padding: 0;
+  max-width: none;
+}
+
+.promo-badge--v0 {
+  background: var(--badge-0);
+  border-radius: 0px;
+}
+
+.promo-badge--v1 {
+  background: var(--badge-1);
+  border-radius: 1px;
+}
+
+.promo-badge--v2 {
+  background: var(--badge-2);
+  border-radius: 2px;
+}
+
+.promo-badge--v3 {
+  background: var(--badge-3);
+  border-radius: 3px;
+}
+
+.promo-badge--v4 {
+  background: var(--badge-4);
+  border-radius: 4px;
+}
+
+.promo-badge--v5 {
+  background: var(--badge-5);
+  border-radius: 5px;
+}
+
+.promo-badge--v6 {
+  background: var(--badge-6);
+  border-radius: 0px;
+}
+
+.promo-badge--v7 {
+  background: var(--badge-7);
+  border-radius: 1px;
+}
+
+.promo-badge--v8 {
+  background: var(--badge-8);
+  border-radius: 2px;
+}
+
+.promo-badge--v9 {
+  background: var(--badge-9);
+  border-radius: 3px;
+}
+
+.promo-badge--v10 {
+  background: var(--badge-10);
+  border-radius: 4px;
+}
+
+.promo-badge--v11 {
+  background: var(--badge-11);
+  border-radius: 5px;
+}
+
+.promo-badge--v12 {
+  background: var(--badge-12);
+  border-radius: 0px;
+}
+
+.promo-badge--v13 {
+  background: var(--badge-13);
+  border-radius: 1px;
+}
+
+.promo-badge--v14 {
+  background: var(--badge-14);
+  border-radius: 2px;
+}
+
+.promo-badge--v15 {
+  background: var(--badge-15);
+  border-radius: 3px;
+}
+
+.promo-badge--v16 {
+  background: var(--badge-16);
+  border-radius: 4px;
+}
+
+.promo-badge--v17 {
+  background: var(--badge-17);
+  border-radius: 5px;
+}
+
+.promo-badge--v18 {
+  background: var(--badge-18);
+  border-radius: 0px;
+}
+
+.promo-badge--v19 {
+  background: var(--badge-19);
+  border-radius: 1px;
+}
+
+.promo-badge--v20 {
+  background: var(--badge-20);
+  border-radius: 2px;
+}
+
+.promo-badge--v21 {
+  background: var(--badge-21);
+  border-radius: 3px;
+}
+
+.promo-badge--v22 {
+  background: var(--badge-22);
+  border-radius: 4px;
+}
+
+.promo-badge--v23 {
+  background: var(--badge-23);
+  border-radius: 5px;
+}
+
+.promo-badge--v24 {
+  background: var(--badge-24);
+  border-radius: 0px;
+}
+
+.promo-badge--v25 {
+  background: var(--badge-25);
+  border-radius: 1px;
+}
+
+.promo-badge--v26 {
+  background: var(--badge-26);
+  border-radius: 2px;
+}
+
+.promo-badge--v27 {
+  background: var(--badge-27);
+  border-radius: 3px;
+}
+
+.promo-badge--v28 {
+  background: var(--badge-28);
+  border-radius: 4px;
+}
+
+.promo-badge--v29 {
+  background: var(--badge-29);
+  border-radius: 5px;
+}
+
+.promo-badge--v30 {
+  background: var(--badge-30);
+  border-radius: 0px;
+}
+
+.promo-badge--v31 {
+  background: var(--badge-31);
+  border-radius: 1px;
+}
+
+.promo-badge--v32 {
+  background: var(--badge-32);
+  border-radius: 2px;
+}
+
+.promo-badge--v33 {
+  background: var(--badge-33);
+  border-radius: 3px;
+}
+
+.promo-badge--v34 {
+  background: var(--badge-34);
+  border-radius: 4px;
+}
+
+.promo-badge--v35 {
+  background: var(--badge-35);
+  border-radius: 5px;
+}
+
+.promo-cols {
+  display: flex;
+  gap: 32px;
+}
+
+/* Two-column promos with a long form get more breathing room. */
+.promo:has(.promo-cols--long) .promo-inner {
+  padding: 64px 80px;
+}
+
+.promo-cols--long {
+  gap: 48px;
+}

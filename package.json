@@ -317,7 +317,48 @@
             "type": "string",
             "default": ".github/code-review-instructions.md",
             "order": 26,
-            "description": "Repo-relative path of a file with project-specific review guidelines. Read from the working tree for local reviews and from the PR's base branch for PR reviews. Leave empty to disable."
+            "description": "Repo-relative path of a file with project-specific review guidelines. Read from the working tree for local reviews and from the PR's base branch for PR reviews. Leave empty to use only instructionsFallback."
+          },
+          "diffLeppard.instructionsFallback": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": ["AGENTS.md", "CLAUDE.md", ".github/copilot-instructions.md", "CONTRIBUTING.md"],
+            "order": 26,
+            "description": "When instructionsFile isn't found, use the first of these that exists as review guidelines (agent and contributor guides often say what is deployed, generated or mirrored). Empty list to turn off."
+          },
+          "diffLeppard.maxInstructionsChars": {
+            "type": "number",
+            "default": 8000,
+            "minimum": 0,
+            "order": 26,
+            "description": "Most characters of review guidelines per request. Long guides are trimmed to their headings plus the sections about reviews, tests, deploys and data. Also capped at 15% of the request."
+          },
+          "diffLeppard.fullFileMaxChars": {
+            "type": "number",
+            "default": 40000,
+            "minimum": 0,
+            "order": 22,
+            "description": "Show a changed file whole when it fits in this many characters (also capped by the model's context window); larger files get their hunks widened by as many lines as fit. 0 = hunks only."
+          },
+          "diffLeppard.relatedMaxChars": {
+            "type": "number",
+            "default": 6000,
+            "minimum": 0,
+            "order": 22,
+            "description": "Most characters per request of related code from elsewhere in the repository (other uses of names the change touches, READMEs of folders it names). Needs the reviewed commit locally. 0 = off."
+          },
+          "diffLeppard.checkDescription": {
+            "type": "boolean",
+            "default": true,
+            "order": 23,
+            "description": "Check the PR description's claims (what it changes, what it guards against) against the diff and report ones the code doesn't support."
+          },
+          "diffLeppard.verifyFindings": {
+            "type": "string",
+            "enum": ["off", "critical-major", "all"],
+            "default": "critical-major",
+            "order": 23,
+            "description": "Before reporting, check each finding at this level again in a separate request that must quote the code proving it. Rejected findings are dropped (still listed in the output channel)."
           },
           "diffLeppard.showStatusBar": {
             "type": "boolean",
@@ -403,6 +444,7 @@
     "build": "tsc -p tsconfig.dist.json",
     "watch": "tsc -watch -p .",
     "test": "npm run compile && npm run build && node --test out/test/*.test.js",
+    "eval": "node eval/run.js",
     "test:vscode": "npm run compile && npm run build && node out/test/vscode/run.js",
     "cli": "npm run -s build && node dist/cli.js",
     "package": "npm run build && vsce package --out diff-leppard.vsix",

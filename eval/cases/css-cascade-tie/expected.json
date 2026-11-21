@@ -1,0 +1,23 @@
+{
+ "title": "CSS rule ties with an unchanged rule far above and wins on source order",
+ "expected": [
+  {
+   "id": "full-width-padding",
+   "severity": "major",
+   "file": "styles/promo.css",
+   "lines": [
+    198,
+    212
+   ],
+   "keywords": [
+    "is-full",
+    "full-width",
+    "full width",
+    "specificity",
+    "source order",
+    "edge to edge"
+   ]
+  }
+ ],
+ "traps": []
+}
