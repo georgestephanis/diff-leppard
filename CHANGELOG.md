@@ -11,6 +11,7 @@
 - **Experimental `--agentic` mode**: the model may call read-only `read_file`, `grep` and `list_dir` tools, confined to the repo at the reviewed commit, with a call and output budget. Falls back to a normal review when the server doesn't do tool calling (#35).
 - **Evaluation set:** `npm run eval` runs small cases with known answers and traps and reports recall, false positives and time (#29). See `eval/README.md`.
 - `--no-context` reviews hunks only, as before.
+- **Reviews are slower by default:** requests are bigger, and each critical or major finding gets one more request. In testing with a 27B model, reviews took several times as long (one 8-range run averaged about 3.7×; times varied a lot between runs), and false critical/major findings fell from 5 to 0 or 1 per run on the test set. `--verify off` and `--no-context` trade that back for speed.
 
 ## 1.3.0 (2026-11-10)
 
