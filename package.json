@@ -350,9 +350,9 @@
           },
           "diffLeppard.checkDescription": {
             "type": "boolean",
-            "default": true,
+            "default": false,
             "order": 23,
-            "description": "Check the PR description's claims (what it changes, what it guards against) against the diff and report ones the code doesn't support."
+            "description": "Check the PR description's claims (what it changes, what it guards against) against the diff and report ones the code doesn't support. Off by default: in testing it raised more false alarms than real ones."
           },
           "diffLeppard.verifyFindings": {
             "type": "string",

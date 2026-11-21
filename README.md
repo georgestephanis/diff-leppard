@@ -74,7 +74,7 @@ A diff alone hides many real problems: a new CSS rule that ties with one 150 lin
 1. **Review guidelines**: `instructionsFile`, or else the first of `instructionsFallback` that exists (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `CONTRIBUTING.md`). Long guides are trimmed to their headings plus the sections about reviews, tests, deploys and data. Up to `maxInstructionsChars`, and at most 15% of the request.
 2. **Surrounding code**: each changed file is shown whole when it fits in `fullFileMaxChars` (and 80% of the room left for the diff). Bigger files get their hunks widened by as many lines as fit. Unchanged lines are marked as context; comments still land on changed lines.
 3. **Related code**: names the change uses (functions, CSS classes, flags, constants) are searched for in the rest of the repo, and folders it names are listed with their README and the last commit that touched them. Other files come first, then docs and tests. Up to `relatedMaxChars`, at most 20% of the request. This needs the reviewed commit locally: local reviews always have it, and `pr` does when run from a clone that has fetched the PR head.
-4. **Description check**: the PR description (for `local --range` and `--base`, the commit messages) is checked against the diff, and claims the code doesn't support are reported (`checkDescription`). This only happens when the whole change fits in one request, since a part of a split review can't see the code that might back a claim.
+4. **Description check** (off by default): the PR description (for `local --range` and `--base`, the commit messages) is checked against the diff, and claims the code doesn't support are reported (`checkDescription`). This only happens when the whole change fits in one request, since a part of a split review can't see the code that might back a claim.
 
 With a small context window these shrink so the diff keeps most of the room; with a large one they fill up to their caps. `maxChunkChars`, automatic or set by you, is the size of one whole request, so guidelines and related code come out of it too. `--no-context` turns off whole files, related code and the `AGENTS.md` fallback; a configured `instructionsFile` is still used, as before.
 
@@ -448,7 +448,7 @@ The names below are CLI config keys:
 | `maxInstructionsChars` | `8000` | Also capped at 15% of the request |
 | `fullFileMaxChars` | `40000` | Show changed files whole up to this size, else widen hunks; `0` = hunks only. See [what the model sees](#what-the-model-sees) |
 | `relatedMaxChars` | `6000` | Related code from elsewhere in the repo per request; `0` = off |
-| `checkDescription` | `true` | Report description claims the diff doesn't support |
+| `checkDescription` | `false` | Report description claims the diff doesn't support (off by default: more false alarms than real ones in testing) |
 | `verifyFindings` | `critical-major` | Second look at findings before reporting: `off`, `critical-major` or `all` |
 | `agentic`, `maxToolCalls` | `false`, `15` | Experimental read-only tools for the model (needs tool calling) |
 | `github.apiUrl`, `github.reviewEvent`, `github.suggestionBlocks` | `https://api.github.com`, `COMMENT`, `false` | `reviewEvent` is what `--post` and the posting prompt use |

@@ -137,7 +137,7 @@ export function defaultSettings(): CliSettings {
     maxInstructionsChars: 8000,
     fullFileMaxChars: 40000,
     relatedMaxChars: 6000,
-    checkDescription: true,
+    checkDescription: false,
     verifyFindings: 'critical-major',
     agentic: false,
     maxToolCalls: 15,
