@@ -188,6 +188,7 @@ async function watchOnce(o) {
                 host: o.host,
                 settings: o.settings,
                 configure: o.configure,
+                noLocalClone: true,
                 log: o.log,
                 signal: o.signal,
                 onProgress: o.onProgress,

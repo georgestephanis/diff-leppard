@@ -64,3 +64,15 @@ jobs:
           test "${{ steps.lcr.outputs.findings }}" = "1"
           grep -q "Mock finding" "${{ steps.lcr.outputs.report }}"
           jq -e '.runs[0].results | length == 1' "${{ steps.lcr.outputs.sarif }}"
+      - id: env-only
+        # A setting without an input comes from the step's env; an empty input must not override it.
+        uses: ./
+        env:
+          DIFF_LEPPARD_MINIMUM_SEVERITY: major
+        with:
+          base-url: http://127.0.0.1:8765/v1
+          pr-number: "1"
+          repository: georgestephanis/diff-leppard
+          review-event: none
+          no-context: "true"
+      - run: test "${{ steps.env-only.outputs.findings }}" = "0"

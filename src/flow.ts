@@ -75,6 +75,8 @@ export async function reviewPullRequest(p: {
   prefetched?: PullRequestInfo;
   /** A local clone of the repo, if any: used to search for related code when it has the PR's head commit. */
   localRoot?: string;
+  /** The caller never has a local clone (watch) and has already said agentic mode can't run. */
+  noLocalClone?: boolean;
 }): Promise<PrReview> {
   const label = `${p.repo.owner}/${p.repo.repo}#${p.number}`;
   let s = p.settings;
@@ -109,7 +111,7 @@ export async function reviewPullRequest(p: {
     log: p.log,
     signal: p.signal,
   });
-  if (s.agentic && !local) p.log.warn('Agentic mode needs a local clone that has the PR head commit (run from a checkout and fetch it); reviewing without tools.');
+  if (s.agentic && !local && !p.noLocalClone) p.log.warn('Agentic mode needs a local clone that has the PR head commit (run from a checkout and fetch it); reviewing without tools.');
   const result = await runReview(loaded.files, {
     llm,
     ...ctx,
@@ -131,6 +133,7 @@ export async function reviewPullRequest(p: {
     preSkipped: loaded.skipped,
   });
   const pr = loaded.pr;
+  result.headSha = pr.headSha;
   const title = `Review of ${label}: ${pr.title}`;
   const markdown = () =>
     renderMarkdownReport(result, {

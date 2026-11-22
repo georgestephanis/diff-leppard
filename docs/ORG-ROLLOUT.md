@@ -55,7 +55,7 @@ jobs:
     secrets: inherit
 ```
 
-The model, severity threshold and any `fail-on` gate are set in the central workflow, so changing them there changes every repo. Callers can override them with `with:` (`model`, `min-severity`, `fail-on`). Settings that have no Action input, such as `verifyFindings`, can be set in the central workflow as `DIFF_LEPPARD_*` variables in the step's `env:`, for example `DIFF_LEPPARD_VERIFY_FINDINGS: off` for faster reviews. Reviews of large PRs can take several minutes, so keep a generous `timeout-minutes`. If the central repo is private, allow other org repos to use it: **Settings → Actions → General → Access**.
+The model, severity threshold and any `fail-on` gate are set in the central workflow, so changing them there changes every repo. Callers can override them with `with:` (`model`, `min-severity`, `fail-on`). Leave `min-severity` empty to let each repo's `.diff-leppard.json` decide. Other settings can be added as Action inputs in the central workflow (for example `verify-findings: "off"` for faster reviews), or as `DIFF_LEPPARD_*` variables in the step's `env:`. Reviews of large PRs can take several minutes, so keep a generous `timeout-minutes`. If the central repo is private, allow other org repos to use it: **Settings → Actions → General → Access**.
 
 Pin `@main` to a tag or SHA if you want repos to pick up changes only when you release them.
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { ChildProcess, spawn } from 'node:child_process';
+import { ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { AddressInfo } from 'node:net';
@@ -234,6 +234,21 @@ test('watch: an existing pending review is skipped, not retried; a running watch
   r = await cli(['watch', '--once', '--state', locked]);
   assert.equal(r.code, 0, r.err);
   assert.equal(posted.length, 1, 'stale lock is taken over');
+});
+
+test("watch ignores the starting directory's repo config and warns about agentic mode once", async () => {
+  reset([
+    { owner: 'o', repo: 'r', number: 1, head: 'aaa1111', requested: true },
+    { owner: 'x', repo: 'y', number: 3, head: 'ccc3333', requested: true },
+  ]);
+  const dir = mkdtempSync(path.join(tmpdir(), 'diff-leppard-watch-cwd-'));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  writeFileSync(path.join(dir, '.diff-leppard.json'), JSON.stringify({ minimumSeverity: 'critical' }));
+  const r = await cli(['watch', '--once', '-v', '-C', dir, '--state', tmpState()], { DIFF_LEPPARD_AGENTIC: 'true' });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(posted.length, 2);
+  assert.doesNotMatch(r.err, /config: .*\.diff-leppard\.json/, "the starting directory's .diff-leppard.json isn't loaded");
+  assert.equal(r.err.match(/Agentic mode/g)?.length, 1, 'warned once, not per PR');
 });
 
 test('pr command reviews and posts through the shared flow', async () => {

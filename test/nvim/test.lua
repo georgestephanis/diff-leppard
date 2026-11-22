@@ -78,11 +78,25 @@ dl.setup({ cmd = { fake }, minimum_severity = "minor", open_quickfix = false })
 dl.show(dl.last, dl.last_root)
 check(#vim.fn.getqflist() == 2, "minimum_severity = minor drops the nit")
 
--- :DiffLeppardPR passes --no-prompt
+-- minimum_severity is passed to the CLI
+dl.setup({ cmd = { fake }, minimum_severity = "major", open_quickfix = false })
+vim.cmd("DiffLeppard")
+wait_done()
+args = vim.fn.readfile(args_file)
+check(vim.deep_equal(args, { "local", "--min-severity", "major", "-q", "-f", "json" }), "--min-severity passed: " .. table.concat(args, " "))
+dl.setup({ cmd = { fake }, open_quickfix = false })
+
+-- :DiffLeppardPR passes --no-prompt, and keeps findings for another commit out of the buffers
+result.headSha = "0123456789abcdef0123456789abcdef01234567"
+vim.fn.writefile({ vim.json.encode(result) }, json_file)
 vim.cmd("DiffLeppardPR 42")
 wait_done()
 args = vim.fn.readfile(args_file)
 check(args[1] == "pr" and args[2] == "42" and vim.tbl_contains(args, "--no-prompt"), "PR args: " .. table.concat(args, " "))
+check(#vim.diagnostic.get(buf, { namespace = dl.ns }) == 0, "PR head not checked out: no diagnostics")
+check(#vim.fn.getqflist() == 3, "PR head not checked out: findings still in quickfix")
+result.headSha = nil
+vim.fn.writefile({ vim.json.encode(result) }, json_file)
 
 -- :DiffLeppardClear
 vim.cmd("DiffLeppardClear")

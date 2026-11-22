@@ -26,8 +26,8 @@ COMMANDS                                               *diff-leppard-commands*
 :DiffLeppardPR [pr]                                           *:DiffLeppardPR*
     Review a GitHub PR: a number, URL or owner/repo#n. With no argument,
     the PR for the current branch. Read-only; nothing is posted.
-    Findings are placed on your local files, so check out the PR's head
-    first or line numbers may be off.
+    If the PR's head isn't checked out, findings go to the quickfix list
+    only, since their line numbers are the PR's.
 
 :DiffLeppardCancel                                        *:DiffLeppardCancel*
     Stop the running review.
@@ -51,7 +51,7 @@ Optional. The defaults:
     diagnostics = true,           -- findings as vim.diagnostic entries
     quickfix = true,              -- findings in the quickfix list
     open_quickfix = true,         -- open it when there are findings
-    minimum_severity = "nit",     -- "critical" | "major" | "minor" | "nit"
+    minimum_severity = nil,       -- "critical" | "major" | "minor" | "nit"
   })
 <
 Severities map to diagnostics as: critical and major → ERROR, minor → WARN,
@@ -66,9 +66,8 @@ NOTES                                                     *diff-leppard-notes*
 
 Findings are suggestions from a model. Check them before acting on them.
 
-`minimum_severity` filters what the CLI returns. The CLI's own
-`minimumSeverity` setting (default "minor") is applied first, so nits only
-show up if you lower that too.
+`minimum_severity` is passed to the CLI as `--min-severity`. When it's nil,
+the CLI's own `minimumSeverity` setting applies (default "minor").
 
 A review can take a few minutes. For a quicker pass, add
 `{ "--verify", "off" }` to `args`.

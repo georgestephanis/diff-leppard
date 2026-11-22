@@ -1,4 +1,5 @@
 import assert from 'assert';
+import * as fs from 'fs';
 import * as http from 'http';
 import { AddressInfo } from 'net';
 import * as path from 'path';
@@ -61,6 +62,16 @@ export async function run(): Promise<void> {
 
     await vscode.commands.executeCommand('diffLeppard.clearFindings');
     assert.equal(vscode.languages.getDiagnostics(vscode.Uri.file(path.join(root, 'users.js'))).length, 0);
+
+    // A repo's .diff-leppard.json applies on top of the user's settings, like in the CLI.
+    fs.writeFileSync(path.join(root, '.diff-leppard.json'), JSON.stringify({ minimumSeverity: 'nit' }));
+    await Promise.race([
+      vscode.commands.executeCommand('diffLeppard.reviewUncommitted'),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('review timed out')), 60000)),
+    ]);
+    assert.equal(vscode.languages.getDiagnostics(vscode.Uri.file(path.join(root, 'new.js'))).length, 1, "the repo config's minimumSeverity keeps the nit");
+    fs.rmSync(path.join(root, '.diff-leppard.json'));
+    await vscode.commands.executeCommand('diffLeppard.clearFindings');
     console.log('VS Code integration test passed');
   } finally {
     server.close();

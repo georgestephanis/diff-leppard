@@ -47,7 +47,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "In untrusted workspaces, workspace settings can't change where requests and credentials are sent.",
+      "description": "In untrusted workspaces, workspace settings can't change where requests and credentials are sent, which files are sent as guidelines, or how much load reviews put on the server.",
       "restrictedConfigurations": [
         "diffLeppard.baseUrl",
         "diffLeppard.provider",
@@ -58,7 +58,15 @@
         "diffLeppard.github.apiUrl",
         "diffLeppard.github.auth",
         "diffLeppard.github.postReview",
-        "diffLeppard.github.reviewEvent"
+        "diffLeppard.github.reviewEvent",
+        "diffLeppard.concurrency",
+        "diffLeppard.maxChunkChars",
+        "diffLeppard.maxOutputTokens",
+        "diffLeppard.requestTimeoutSeconds",
+        "diffLeppard.ollamaNumCtx",
+        "diffLeppard.verifyFindings",
+        "diffLeppard.agentic",
+        "diffLeppard.maxToolCalls"
       ]
     }
   },
@@ -353,6 +361,20 @@
             "default": false,
             "order": 23,
             "description": "Check the PR description's claims (what it changes, what it guards against) against the diff and report ones the code doesn't support. Off by default: in testing it raised more false alarms than real ones."
+          },
+          "diffLeppard.agentic": {
+            "type": "boolean",
+            "default": false,
+            "order": 24,
+            "description": "Experimental: let the model read files and search the repo with read-only tools before answering. Needs a server with tool calling. Slower; in testing it didn't find more."
+          },
+          "diffLeppard.maxToolCalls": {
+            "type": "number",
+            "default": 15,
+            "minimum": 1,
+            "maximum": 200,
+            "order": 24,
+            "description": "Tool calls per request when diffLeppard.agentic is on."
           },
           "diffLeppard.verifyFindings": {
             "type": "string",

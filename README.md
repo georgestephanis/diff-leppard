@@ -254,9 +254,9 @@ Things to know:
   - join the network from the job (the example has a commented [Tailscale](https://github.com/tailscale/github-action) step), or
   - expose the server over HTTPS behind an API key or an auth proxy (put proxy headers in `extra-headers` from secrets).
 - **Fork PRs don't get secrets** on `pull_request` events. The example skips them; a maintainer can `/review` instead. The action never checks out or runs PR code. It reads the diff through the API, and the workflow only needs `contents: read` and `pull-requests: write`.
-- **Inputs:** `base-url`, `model`, `api-key`, `provider`, `extra-headers`, `extra-body`, `json-mode`, `review-event`, `attribution`, `min-severity`, `fail-on`, `max-chunk-chars`, `max-output-tokens`, `concurrency`, `timeout-seconds`, `extra-instructions`, `pr-number`, `repository`, `github-token`, `github-api-url`. See [`action.yml`](action.yml).
-- **Other settings** have no input, but for a setting without an input, a `DIFF_LEPPARD_*` variable in the step's `env:` works (the inputs set their own variables, which win), for example `DIFF_LEPPARD_VERIFY_FINDINGS: off` for faster reviews, or `DIFF_LEPPARD_CHECK_DESCRIPTION: true`. A repo's `.diff-leppard.json` on the base branch applies too, except for `minimumSeverity`, which the `min-severity` input (default `minor`) overrides.
-- **Context:** the Action reads the PR through the API, so changed files are shown whole and guidelines are used, but related-code search and `agentic` are skipped: they need the PR's head commit in the workspace, which the example doesn't fetch. (Fetching it doesn't run anything from the PR, but think it through for `issue_comment` triggers and fork PRs.) With the extra context and the verification pass, reviews take about twice as long as plain hunks; keep a generous `timeout-minutes`.
+- **Inputs:** `base-url`, `model`, `api-key`, `provider`, `extra-headers`, `extra-body`, `json-mode`, `review-event`, `attribution`, `min-severity`, `fail-on`, `max-chunk-chars`, `max-output-tokens`, `concurrency`, `timeout-seconds`, `verify-findings`, `check-description`, `no-context`, `extra-instructions`, `pr-number`, `repository`, `github-token`, `github-api-url`. See [`action.yml`](action.yml).
+- **Other settings:** a repo's `.diff-leppard.json` on the base branch applies, and any `DIFF_LEPPARD_*` variable in the step's `env:` works, for example `DIFF_LEPPARD_AGENTIC: true`. Inputs left empty don't override either; an input that is set wins.
+- **Context:** the Action reads the PR through the API, so changed files are shown whole and guidelines are used, but related-code search and `agentic` are skipped unless the PR's head commit is in the workspace. The example has an optional, commented-out checkout step for that. Nothing from the PR is run, but it puts PR code on a runner that has your secrets, so think it through for `issue_comment` triggers. With the extra context and the verification pass, reviews take about twice as long as plain hunks; keep a generous `timeout-minutes`.
 
 ## watch: automatic reviews across all your repos
 
@@ -289,8 +289,8 @@ A few things to know:
 - **State:** reviewed PRs are recorded in `~/.local/state/diff-leppard/watch.json`. A lock file prevents overlapping runs.
 - **Failures:** a failed review is retried up to 3 times per commit.
 - **Pending reviews:** if you already have a pending review on a PR, it's skipped, because GitHub allows only one pending review per person.
-- **Context:** watch reads each PR through the API, so related-code search is skipped and `agentic` has no effect (it logs a warning for each PR).
-- **Repo config:** a PR's own `.diff-leppard.json` (from its base branch) applies. If it has none, watch currently falls back to the `.diff-leppard.json` of the directory you started it in, so start it outside any repo.
+- **Context:** watch reads each PR through the API, so related-code search is skipped and `agentic` has no effect (it warns once at startup).
+- **Repo config:** each PR's own `.diff-leppard.json` (from its base branch) applies. The directory you start watch in doesn't matter.
 
 To keep it running, use the [systemd user service](docs/watch/diff-leppard-watch.service) on Linux or the [launchd agent](docs/watch/me.diffleppard.watch.plist) on macOS. Both include install instructions.
 
@@ -327,7 +327,7 @@ This repo is also a Neovim plugin (0.10+). It runs the CLI, so install that firs
 | `:DiffLeppardPR [pr]` | A GitHub PR (read-only); with no argument, this branch's PR |
 | `:DiffLeppardCancel`, `:DiffLeppardClear`, `:DiffLeppardShow` | Stop the review, clear findings, show the last ones again |
 
-Reviews run in the background. Findings show up as diagnostics (critical and major as errors, minor as warnings, nits as hints) and in the quickfix list. `:checkhealth diff-leppard` checks the CLI and the model server, and `:help diff-leppard` lists the `setup()` options (`cmd`, `args`, `minimum_severity`, …). `args` are passed to the CLI, so `{ "--verify", "off" }` or `{ "--agentic" }` work there. `minimum_severity` only filters what the CLI returns; the CLI's own `minimumSeverity` (default `minor`) applies first. `:DiffLeppardPR` puts findings on your local files without checking that the PR's head is checked out, so line numbers can be off on another branch.
+Reviews run in the background. Findings show up as diagnostics (critical and major as errors, minor as warnings, nits as hints) and in the quickfix list. `:checkhealth diff-leppard` checks the CLI and the model server, and `:help diff-leppard` lists the `setup()` options (`cmd`, `args`, `minimum_severity`, …). `args` are passed to the CLI, so `{ "--verify", "off" }` or `{ "--agentic" }` work there. `minimum_severity` is passed to the CLI as `--min-severity`; unset, the CLI's own `minimumSeverity` applies. When the PR's head isn't checked out, `:DiffLeppardPR` lists findings in the quickfix list only, since their line numbers are the PR's.
 
 ## MCP server
 
@@ -356,7 +356,7 @@ claude mcp add diff-leppard -- diff-leppard mcp            # Claude Code
 { "servers": { "diff-leppard": { "type": "stdio", "command": "diff-leppard", "args": ["mcp"] } } }
 ```
 
-CLI flags work too and apply to every review the server runs, e.g. `"args": ["mcp", "--model", "qwen2.5-coder:32b"]`, or `"--verify", "off"` for faster reviews. The tools don't take a title or description, so for `review_local_changes` the description check (if turned on) only has commit messages to go on, with `base` or `range`. Run with `-v` to log requests to stderr. For Claude Code, the [plugin](#claude-code-plugin) is the lighter option: its skill drives the CLI directly.
+CLI flags work too and apply to every review the server runs, e.g. `"args": ["mcp", "--model", "qwen2.5-coder:32b"]`, or `"--verify", "off"` for faster reviews. `review_local_changes` takes an optional `title` and `description` (for example the task the agent was given); with `base` or `range` it uses the commit messages when they're not given. Run with `-v` to log requests to stderr. For Claude Code, the [plugin](#claude-code-plugin) is the lighter option: its skill drives the CLI directly.
 
 ## Claude Code plugin
 
@@ -437,25 +437,23 @@ Every surface runs the same review, but they don't all get the same context or r
 | --- | --- | --- | --- | --- | --- |
 | Changed files whole, guidelines, verification | yes | yes | yes | yes | yes |
 | Related code from elsewhere in the repo | yes (PRs: when the head commit is fetched locally) | yes (PRs: when the head commit is fetched in `path`) | yes (PRs: when the head commit is in the workspace's repo) | only if the workflow fetches the PR head commit | no |
-| `agentic` | `--agentic` | launch flag | no | no input (needs the PR head commit fetched) | no |
-| Changing `verifyFindings` | `--verify`, config or env | launch flag, config or env | setting | step `env:` | `--verify`, config or env |
-| Changing `checkDescription` | config, env or repo config | config, env or repo config | setting | step `env:` or repo config | config, env or repo config |
-| Title and description for the description check | `--title`, `--description`, commit messages, PR body | PR body, or commit messages for local changes | PR body | PR body | PR body |
-| Repo `.diff-leppard.json` | yes (PRs: from the base branch) | yes | no | yes, but `min-severity` always wins | yes, but see below |
+| `agentic` | `--agentic` | launch flag | setting (PRs: when the head commit is in the workspace's repo) | step `env:` (needs the PR head checked out) | no |
+| Changing `verifyFindings` | `--verify`, config or env | launch flag, config or env | setting | `verify-findings` input or step `env:` | `--verify`, config or env |
+| Changing `checkDescription` | config, env or repo config | config, env or repo config | setting or repo config | `check-description` input, step `env:` or repo config | config, env or repo config |
+| Title and description for the description check | `--title`, `--description`, commit messages, PR body | `title`, `description`, commit messages, PR body | PR body | PR body | PR body |
+| Repo `.diff-leppard.json` | yes (PRs: from the base branch) | yes | yes, under workspace settings | yes | yes, each PR's own |
 
 Other differences to be aware of:
 
-- **watch** falls back to the starting directory's `.diff-leppard.json` for repos that have none of their own, so start it outside any repo.
-- **The Action's `min-severity`** input defaults to `minor` and overrides a repo's `minimumSeverity`. Set the input instead.
-- **Neovim's `minimum_severity`** filters on top of the CLI's own `minimumSeverity`, so the stricter of the two wins.
-- **Neovim's `:DiffLeppardPR`** puts findings on your local files without checking that the PR's head is checked out.
-- **VS Code** doesn't have `agentic` or `maxToolCalls`, and ignores `.diff-leppard.json`. In an untrusted workspace it ignores the workspace's values for where requests go (`baseUrl`, `provider`, headers, body), which guideline files are read, and GitHub settings, but not for `model`, concurrency, output tokens, timeouts or verification.
+- **VS Code** applies a repo's `.diff-leppard.json` over your user settings, but settings you made for the workspace in VS Code win. In an untrusted workspace it ignores the workspace's values for where requests go (`baseUrl`, `provider`, headers, body), which guideline files are read, GitHub settings, and settings that add load on your server (concurrency, request size, output tokens, timeouts, verification, `agentic`); a repo config can't set the guideline files there either.
+- **The Action** only passes inputs you set, so leaving `min-severity` empty lets the repo's `minimumSeverity` apply.
+- **Neovim's `:DiffLeppardPR`** lists findings in the quickfix list only when the PR's head isn't checked out.
 
 ## Settings reference
 
 The names below are CLI config keys:
 
-- **VS Code:** prefix them with `diffLeppard.`, except `agentic` and `maxToolCalls`, which are CLI only. VS Code doesn't read `.diff-leppard.json`.
+- **VS Code:** prefix them with `diffLeppard.`. VS Code also applies a repo's `.diff-leppard.json`, under workspace settings.
 - **Environment variables:** use `DIFF_LEPPARD_` plus the upper-snake-case name, for example `DIFF_LEPPARD_MAX_CHUNK_CHARS`. `github.*` keys become `DIFF_LEPPARD_GITHUB_*`, for example `DIFF_LEPPARD_GITHUB_ATTRIBUTION=false`.
 - **Validation:** values are checked, so `concurrency: "abc"` is an error rather than a silent no-op.
 
@@ -484,7 +482,7 @@ The names below are CLI config keys:
 | `relatedMaxChars` | `6000` | Related code from elsewhere in the repo per request; `0` = off |
 | `checkDescription` | `false` | Report description claims the diff doesn't support (off by default: more false alarms than real ones in testing) |
 | `verifyFindings` | `critical-major` | Second look at findings before reporting: `off`, `critical-major` or `all`. Not allowed in a repo's `.diff-leppard.json` |
-| `agentic`, `maxToolCalls` | `false`, `15` | CLI only (not a VS Code setting). Experimental read-only tools for the model (needs tool calling and a local checkout) |
+| `agentic`, `maxToolCalls` | `false`, `15` | Experimental read-only tools for the model (needs tool calling and a local checkout) |
 | `github.apiUrl`, `github.reviewEvent`, `github.suggestionBlocks` | `https://api.github.com`, `COMMENT`, `false` | `reviewEvent` is what `--post` and the posting prompt use |
 | `github.attribution` | `true` | End posted reviews with "Review generated by Diff Leppard, running `<model>`" |
 
