@@ -5,3 +5,4 @@ conversation-log.jsonl
 .vscode-test/
 .serena/
 doc/tags
+eval/results/

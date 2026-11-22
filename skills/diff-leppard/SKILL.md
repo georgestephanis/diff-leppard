@@ -34,6 +34,7 @@ Settings live in `~/.config/diff-leppard/config.json`. The keys match the VS Cod
 
 - **Ask the user** for the server URL, model and key. Never guess them, and never print the key back.
 - **Credentials belong in the user config or `DIFF_LEPPARD_*` environment variables.** Never put them in a repo file: `.diff-leppard.json` in a repo may only hold review preferences (`model`, `minimumSeverity`, `excludeGlobs`, `extraInstructions`, `instructionsFile`, `maxChunkChars`, `contextLines`, `includeUntracked`, `temperature`, `instructionsFallback`, `maxInstructionsChars`, `fullFileMaxChars`, `relatedMaxChars`, `checkDescription`).
+- **Review guidelines** come from `.github/code-review-instructions.md`, or if that's missing, from the repo's `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md` or `CONTRIBUTING.md`. Those files are sent to the user's model.
 - **Ollama:** use `"provider": "ollama"` with `"baseUrl": "http://host:11434"`, so `num_ctx` is set (`ollamaNumCtx`).
 - **Reasoning models** (Qwen3-style on vLLM/SGLang) are many times faster with `extraBody: {"chat_template_kwargs": {"enable_thinking": false}}`. For Ollama, use `{"think": false}`.
 - **Chunk size is automatic** (`maxChunkChars: 0`): it's sized to the context window the server reports. Only set it if the server misreports its context.
@@ -49,6 +50,8 @@ Use `-f json` whenever you'll read the results yourself, and `-q` to drop progre
 | Everything on this branch (committed and uncommitted) | `diff-leppard local --base main -q -f json` |
 | Exactly some commits | `diff-leppard local --range origin/main..HEAD -q -f json` |
 | A GitHub PR (read-only) | `diff-leppard pr 123 --no-prompt -q -f json` (or a PR URL / `owner/repo#123`) |
+| Tell the model what the change is for | add `--title "…"` and `--description @PLAN.md` (or `@-` for stdin) to `local` |
+| A quicker pass | add `--verify off --no-context` |
 | As MCP tools (for agents without shell access) | `diff-leppard mcp` (stdio): `review_local_changes`, `review_pull_request`, `check_model_server` |
 | For other tools | `-f sarif` (code scanning, IDEs) or `-f rdjson` (reviewdog → GitLab, Bitbucket, Gitea, Gerrit) |
 
@@ -56,7 +59,8 @@ The JSON is a `ReviewResult`:
 
 ```json
 { "summary": "…", "findings": [ { "file": "src/a.ts", "line": 42, "endLine": 44, "severity": "major",
-  "category": "bug", "title": "…", "body": "…", "suggestion": "…", "inline": true } ],
+  "category": "bug", "title": "…", "body": "…", "suggestion": "…", "inline": true,
+  "verified": true, "evidence": "…" } ], "rejectedFindings": [ … same shape … ],
   "skippedFiles": [ { "path": "…", "reason": "…" } ], "errors": [], "model": "…" }
 ```
 
@@ -67,7 +71,9 @@ The exit codes are:
 - `2`: an error, **or an incomplete review**, meaning some parts failed. Check `errors`.
 - `130`: cancelled
 
-Reviews take seconds to minutes. Use a generous timeout, and don't run several at once against one GPU.
+Findings come with `verified: true` and the quoted `evidence` when a second request confirmed them against the code. `rejectedFindings` are ones that check judged false; they're not in `findings` and are only there for reference.
+
+Reviews take a few minutes, longer for big changes, because serious findings get that second request. Use a generous timeout (10 minutes or more), and don't run several at once against one GPU.
 
 ## 3. The second-opinion loop
 

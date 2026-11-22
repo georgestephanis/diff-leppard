@@ -7,9 +7,10 @@ npm run build
 npm run eval -- --label my-change                      # every case, your normal config
 npm run eval -- --label hunks-only -- --no-context      # anything after -- goes to diff-leppard
 npm run eval -- --label other --config ./other.json --cases css-cascade-tie,template-traps
+npm run eval -- --label debug --cases template-traps --keep   # don't delete the throwaway repos ($TMPDIR/dl-eval-*)
 ```
 
-It needs a model server, configured as usual (`~/.config/diff-leppard/config.json`, `DIFF_LEPPARD_*`, or `--config`). Each case takes from a few seconds to a minute or two on a 27B model.
+It needs a model server, configured as usual (`~/.config/diff-leppard/config.json`, `DIFF_LEPPARD_*`, or `--config`). Each case takes from a few seconds to a few minutes on a 27B model.
 
 For every case the runner commits `before/` and then `after/` into a throwaway git repo and runs `diff-leppard local --range` on it, with `description.md` as the change's title (first line) and description. It prints one line per case and writes `eval/results/<label>.json`:
 
@@ -20,7 +21,7 @@ For every case the runner commits `before/` and then `after/` into a throwaway g
 
 Matching is deliberately loose: the file path ends with the expected file, the line is within ±15 of the window, and any keyword appears in the title or body. Always read the findings in the results file too: a keyword match isn't proof the model understood the problem, and if a match looks wrong, fix the keywords.
 
-Compare two configurations by running both with different labels. Results in `eval/results/` that are checked in are reference points (see below); add one when a change moves the numbers.
+Compare two configurations by running both with different labels. Results are written to `eval/results/`, which git ignores. No reference results are checked in yet ([#29](https://github.com/georgestephanis/diff-leppard/issues/29)); to add one, use `git add -f` and say which model and settings produced it. Runs vary, so compare several runs of each configuration, not one.
 
 ## Cases
 

@@ -1,7 +1,7 @@
 {
   "name": "diff-leppard",
   "displayName": "Diff Leppard",
-  "description": "Diff Leppard: AI code review of uncommitted changes or GitHub pull requests using your own self-hosted LLM (vLLM, Ollama, LM Studio, llama.cpp, or any OpenAI-compatible server). VS Code extension, CLI, gh extension and GitHub Action.",
+  "description": "Diff Leppard: AI code review of uncommitted changes or GitHub pull requests using your own self-hosted LLM (vLLM, Ollama, LM Studio, llama.cpp, or any OpenAI-compatible server). VS Code extension, CLI, gh extension, GitHub Action and MCP server.",
   "version": "1.3.0",
   "publisher": "georgestephanis",
   "icon": "media/icon.png",
@@ -359,7 +359,7 @@
             "enum": ["off", "critical-major", "all"],
             "default": "critical-major",
             "order": 23,
-            "description": "Before reporting, check each finding at this level again in a separate request that must quote the code proving it. Rejected findings are dropped (still listed in the output channel)."
+            "description": "Before reporting, check each finding at this level again in a separate request that must quote the code proving it. Rejected findings are dropped (still listed in the output channel); ones it can't confirm or reject are lowered one severity level (never below the minimum severity)."
           },
           "diffLeppard.showStatusBar": {
             "type": "boolean",
