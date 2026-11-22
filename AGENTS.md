@@ -4,7 +4,7 @@ Guidance for AI coding agents (and humans) working on this repository.
 
 ## What this is
 
-A VS Code extension that reviews code with a **self-hosted LLM**. It supports any OpenAI-compatible `/v1/chat/completions` server (vLLM, LM Studio, llama.cpp, SGLang, …) and Ollama's native `/api/chat`. It can review:
+Code review with a **self-hosted LLM**, as a VS Code extension, CLI, `gh` extension, GitHub Action, MCP server, pre-commit hook, Neovim plugin and Claude Code plugin. It supports any OpenAI-compatible `/v1/chat/completions` server (vLLM, LM Studio, llama.cpp, SGLang, …) and Ollama's native `/api/chat`. It can review:
 
 - uncommitted changes (`git diff HEAD` plus untracked files)
 - staged changes (`git diff --cached`)
@@ -25,17 +25,16 @@ It can also post the result back to the PR as a GitHub review with inline commen
 | `src/context.ts` | Extra review context sized from the context window: `RepoView` (repo at a commit, read-only), whole files / widened hunks, related-code retrieval, AGENTS.md-style guidelines | no |
 | `src/verify.ts` | Verification pass: one request per serious finding that must confirm it and quote the code | no |
 | `src/agent.ts` | Experimental `--agentic` mode: read-only tools (`read_file`, `grep`, `list_dir`) and the tool loop | no |
-| `eval/` | Review-quality evaluation set (`npm run eval`); cases are small before/after trees with expected findings and traps | – |
 | `src/git.ts` | `git` subprocess helpers, local diffs, untracked files | no |
 | `src/github.ts` | GitHub REST client, PR/remote URL parsing, review payload + posting with fallbacks | no |
 | `src/report.ts` | Markdown report rendering | no |
 | `src/markdown.ts` | `fence`, severity counts, `sanitizeText` (strips control chars from model output) | no |
 | `src/gh.ts` | `gh` CLI lookup, host-scoped GitHub tokens, GitHub remotes (shared by extension and CLI) | no |
-| `src/pr.ts` | Load a PR's files + review guidelines (shared by extension and CLI) | no |
+| `src/pr.ts` | Load a PR's files and metadata (shared by extension and CLI) | no |
 | `src/config.ts` | CLI config: defaults < user file < repo `.diff-leppard.json` < `DIFF_LEPPARD_*` env < flags | no |
 | `src/format.ts` | Terminal (ANSI) rendering of results | no |
 | `src/formats.ts` | SARIF 2.1.0 and reviewdog rdjson output (validated against the official schemas) | no |
-| `src/flow.ts` | Shared review flows (CLI, `watch`, MCP): `reviewLocalChanges`, `reviewPullRequest` (base-branch repo config → load → size → review), `makeLlm`, `defaultRepo` | no |
+| `src/flow.ts` | Shared review flows (CLI, `watch`, MCP): `reviewLocalChanges`, `reviewPullRequest` (base-branch repo config → load → size → review), `prepareContext` (budget, guidelines, whole files, related code; also used by the extension), `makeLlm`, `defaultRepo` | no |
 | `src/watch.ts` | `diff-leppard watch`: GitHub search for PRs wanting your review, state file, lock, once-per-commit, posting | no |
 | `src/mcp.ts` | `diff-leppard mcp`: dependency-free MCP server (newline-delimited JSON-RPC over stdio). Tools: `review_local_changes`, `review_pull_request`, `check_model_server`. **Read-only by design**: never posts to GitHub | no |
 | `src/cli.ts` | CLI entry (`diff-leppard`, `gh diff-leppard`): arg parsing, posting prompt, exit codes | no |
@@ -44,6 +43,8 @@ It can also post the result back to the PR as a GitHub review with inline commen
 | `test/watch.test.ts` | `watch` and `pr` end to end against a mock GitHub API + mock model server | no |
 | `test/mcp.test.ts` | The MCP server end to end over stdio (handshake, tools, input checks, cancellation) | no |
 | `test/cli.test.ts` | Config layering and the CLI end-to-end against `test/fixtures/mock-openai.js` | no |
+| `test/context.test.ts` | Context retrieval, budget, guidelines fallback, verification and agent tools | no |
+| `eval/` | Review-quality evaluation set (`npm run eval`); cases are small before/after trees with expected findings and traps | – |
 | `dist/` | **Committed** build of `src/` (`npm run build`). The extension, CLI, gh extension, pre-commit hook and Action all run it, so installing from git needs no build. CI fails if it's stale. | – |
 | `bin/diff-leppard.js` | npm `bin` shim → `dist/cli.js` | – |
 | `gh-diff-leppard/` | `gh` extension wrapper (bash) that runs `dist/cli.js` from the clone, or `diff-leppard` on PATH | – |
@@ -70,9 +71,10 @@ npm test               # compile + unit tests + mock-server tests (fast, no netw
 npm run test:vscode    # launches VS Code; set VSCODE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code" to skip the download
 npm run package        # -> diff-leppard.vsix
 nvim --headless -u NONE -l test/nvim/test.lua   # Neovim plugin tests
+npm run eval -- --label <name>   # review quality against a real model server (see eval/README.md)
 ```
 
-Run `npm test` before you finish any change; it also rebuilds `dist/`. **Commit `dist/` together with your `src/` changes**, because CI fails when they differ. Anything imported by `src/cli.ts` must not import `vscode`: the CLI tests spawn `dist/cli.js` in plain Node and fail if it does. CLI settings mirror the extension's `diffLeppard.*` settings; when you add a setting, add it to `package.json`, `readSettings()` in `extension.ts`, `CliSettings`/`defaultSettings()` in `config.ts`, and an `DIFF_LEPPARD_*` env var / action input if CI users need it. Run `npm run test:vscode` when you change `extension.ts` or `package.json` contributions.
+Run `npm test` before you finish any change; it also rebuilds `dist/`. **Commit `dist/` together with your `src/` changes**, because CI fails when they differ. Anything imported by `src/cli.ts` must not import `vscode`: the CLI tests spawn `dist/cli.js` in plain Node and fail if it does. CLI settings mirror the extension's `diffLeppard.*` settings; when you add a setting, add it to `package.json`, `readSettings()` in `extension.ts`, `CliSettings`/`defaultSettings()` in `config.ts`, and an action input if CI users need it (every setting already has a `DIFF_LEPPARD_*` env var). CLI-only settings (`agentic`, `maxToolCalls`) skip `package.json` and `readSettings()`; list them as CLI only in the README's settings reference. Run `npm run test:vscode` when you change `extension.ts` or `package.json` contributions.
 
 ## Conventions and invariants
 

@@ -71,23 +71,6 @@ To size chunks yourself, set `maxChunkChars`. Roughly: (context window − `maxO
 | 32k | 60000 |
 | 128k | 100000 |
 
-### What the model sees
-
-A diff alone hides many real problems: a new CSS rule that ties with one 150 lines up, an `{% if %}` guard a few lines above a link, a README saying the data folder a script reads is out of date. So each request carries more than the hunks, sized from the same context budget:
-
-1. **Review guidelines**: `instructionsFile`, or else the first of `instructionsFallback` that exists (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `CONTRIBUTING.md`). Long guides are trimmed to their headings plus the sections about reviews, tests, deploys and data. Up to `maxInstructionsChars`, and at most 15% of the request.
-2. **Surrounding code**: each changed file is shown whole when it fits in `fullFileMaxChars` (and 80% of the room left for the diff). Bigger files get their hunks widened by as many lines as fit. Unchanged lines are marked as context; comments still land on changed lines.
-3. **Related code**: names the change uses (functions, CSS classes, flags, constants) are searched for in the rest of the repo, and folders it names are listed with their README and the last commit that touched them. Other files come first, then docs and tests. Up to `relatedMaxChars`, at most 20% of the request. This needs the reviewed commit locally: local reviews always have it, and `pr` does when run from a clone that has fetched the PR head.
-4. **Description check** (off by default): the PR description (for `local --range` and `--base`, the commit messages) is checked against the diff, and claims the code doesn't support are reported (`checkDescription`). This only happens when the whole change fits in one request, since a part of a split review can't see the code that might back a claim.
-
-With a small context window these shrink so the diff keeps most of the room; with a large one they fill up to their caps. `maxChunkChars`, automatic or set by you, is the size of one whole request, so guidelines and related code come out of it too. `--no-context` turns off whole files, related code and the `AGENTS.md` fallback; a configured `instructionsFile` is still used, as before, and verification may still read a file that a finding names.
-
-After the review, critical and major findings get a **second look** (`verifyFindings`): a separate request with the code around the finding must confirm it and quote the lines that prove it. Rejected findings are dropped (listed in `-v` output and in JSON as `rejectedFindings`); findings it can't decide are kept one severity lower. A finding on a file the change didn't touch (models often blame a file they only saw as context) is checked against that file, read from the reviewed version of the repo, together with the change; one that names no file is checked against the whole change; one with no code to check against is lowered one step. Set `verifyFindings` to `all` to check every finding, or `off`.
-
-All of this makes reviews slower than plain hunks: bigger requests, plus one more request per serious finding. In testing with a 27B model, reviews took about twice as long per range (a rough comparison: one 1.3.0 run, on a different set of ranges), and false critical and major findings went from 5 in a 1.3.0 run to none in each of 3 runs. For quick reviews, `--verify off` drops the second look and `--no-context` sends hunks only.
-
-**Experimental: `--agentic`** (`agentic: true`) lets the model call read-only tools before answering: `read_file` (also the version before the change), `grep` and `list_dir`, confined to the repository at the reviewed commit, with at most `maxToolCalls` calls and tool output capped by the context budget. It needs a server with tool calling (vLLM with `--enable-auto-tool-choice` and a tool parser, SGLang, LM Studio, recent Ollama) and falls back to a normal review if the server refuses tools. It's slower and not measured yet ([#35](https://github.com/georgestephanis/diff-leppard/issues/35)).
-
 **Ollama:** Ollama silently truncates prompts longer than its context window, which is small by default. Use `provider: "ollama"` so Diff Leppard can set `num_ctx` (`ollamaNumCtx`), or start Ollama with `OLLAMA_CONTEXT_LENGTH=16384`.
 
 **Reasoning models** (Qwen3, DeepSeek-R1, gpt-oss, …) work too. `<think>` blocks and `reasoning` streams are ignored. However, they can think for thousands of tokens before they answer, which counts against `maxOutputTokens`. With guided JSON (`json_schema`), some never get to the answer at all. To skip the thinking on Qwen3-style models served by vLLM or SGLang:
@@ -98,6 +81,23 @@ All of this makes reviews slower than plain hunks: bigger requests, plus one mor
 ```
 
 In testing, a 27B Qwen model with thinking off reviewed a small diff in about 30 seconds. With thinking on it took about 3.5 minutes. Both runs flagged the SQL injection, the off-by-one and the hardcoded secret on the right lines.
+
+### What the model sees
+
+A diff alone hides many real problems: a new CSS rule that ties with one 150 lines up, an `{% if %}` guard a few lines above a link, a README saying the data folder a script reads is out of date. So each request carries more than the hunks, sized from the same context budget:
+
+1. **Review guidelines**: `instructionsFile`, or else the first of `instructionsFallback` that exists (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `CONTRIBUTING.md`). Long guides are trimmed to their headings plus the sections about reviews, tests, deploys and data. Up to `maxInstructionsChars`, and at most 15% of the request.
+2. **Surrounding code**: each changed file is shown whole when it fits in `fullFileMaxChars` (and 80% of the room left for the diff). Bigger files get their hunks widened by as many lines as fit. Unchanged lines are marked as context; comments still land on changed lines.
+3. **Related code**: names the change uses (functions, CSS classes, flags, constants) are searched for in the rest of the repo, and folders it names are listed with their README and the last commit that touched them. Other files come first, then docs and tests. Up to `relatedMaxChars`, at most 20% of the request. This needs the reviewed commit locally: local reviews always have it, and `pr` does when run from a clone that has fetched the PR head. `watch`, and the GitHub Action unless the workflow fetches the PR head, read PRs through the API, so they skip it (see [Platform differences](#platform-differences)).
+4. **Description check** (off by default): the PR description (for `local --range` and `--base`, the commit messages; `--title` and `--description` set them explicitly) is checked against the diff, and claims the code doesn't support are reported (`checkDescription`). This only happens when the whole change fits in one request, since a part of a split review can't see the code that might back a claim.
+
+With a small context window these shrink so the diff keeps most of the room; with a large one they fill up to their caps. `maxChunkChars`, automatic or set by you, is the size of one whole request, so guidelines and related code come out of it too. `--no-context` turns off whole files, related code and the `AGENTS.md` fallback; a configured `instructionsFile` is still used, as before, and verification may still read a file that a finding names.
+
+After the review, critical and major findings get a **second look** (`verifyFindings`): a separate request with the code around the finding must confirm it and quote the lines that prove it. Rejected findings are dropped (listed in `-v` output and in JSON as `rejectedFindings`); findings it can't decide are kept one severity lower. A finding on a file the change didn't touch (models often blame a file they only saw as context) is checked against that file, read from the reviewed version of the repo, together with the change; one that names no file is checked against the whole change; one with no code to check against is lowered one step. Set `verifyFindings` to `all` to check every finding, or `off`.
+
+All of this makes reviews slower than plain hunks: bigger requests, plus one more request per serious finding. In testing with a 27B model, reviews took about twice as long per range (a rough comparison: one 1.3.0 run, on a different set of ranges), and false critical and major findings went from 5 in a 1.3.0 run to none in each of 3 runs. For quick reviews, `--verify off` drops the second look and `--no-context` sends hunks only.
+
+**Experimental: `--agentic`** (`agentic: true`) lets the model call read-only tools before answering: `read_file` (also the version before the change), `grep` and `list_dir`, confined to the repository at the reviewed commit, with at most `maxToolCalls` calls and tool output capped by the context budget. It needs a server with tool calling (vLLM with `--enable-auto-tool-choice` and a tool parser, SGLang, LM Studio, recent Ollama) and falls back to a normal review if the server refuses tools. It needs the reviewed commit locally, like related code, and isn't available in VS Code. In testing with a 27B model it found nothing more, the model rarely used the tools, and it was slower ([#35](https://github.com/georgestephanis/diff-leppard/issues/35)).
 
 ## VS Code extension
 
@@ -171,6 +171,8 @@ diff-leppard local --staged --fail-on major   # pre-commit / CI style: exit 1 on
 diff-leppard local --base main        # everything on this branch since it left main (committed + uncommitted)
 diff-leppard local --range v1.0.0..HEAD   # exactly these commits (a...b = since their merge-base)
 diff-leppard pr 123 -f json           # machine-readable output (also -f markdown, sarif, rdjson; -o report.md)
+diff-leppard local --description @PLAN.md   # tell the model what the change is for (also --title; @- reads stdin)
+diff-leppard local --verify off --no-context  # quick pass: no second look, hunks only
 ```
 
 Settings are read in this order, each overriding the one before:
@@ -252,7 +254,9 @@ Things to know:
   - join the network from the job (the example has a commented [Tailscale](https://github.com/tailscale/github-action) step), or
   - expose the server over HTTPS behind an API key or an auth proxy (put proxy headers in `extra-headers` from secrets).
 - **Fork PRs don't get secrets** on `pull_request` events. The example skips them; a maintainer can `/review` instead. The action never checks out or runs PR code. It reads the diff through the API, and the workflow only needs `contents: read` and `pull-requests: write`.
-- **Inputs:** `base-url`, `model`, `api-key`, `provider`, `extra-headers`, `extra-body`, `json-mode`, `review-event`, `attribution`, `min-severity`, `fail-on`, `max-chunk-chars`, `max-output-tokens`, `concurrency`, `timeout-seconds`, `extra-instructions`, `pr-number`, `repository`, `github-token`. See [`action.yml`](action.yml).
+- **Inputs:** `base-url`, `model`, `api-key`, `provider`, `extra-headers`, `extra-body`, `json-mode`, `review-event`, `attribution`, `min-severity`, `fail-on`, `max-chunk-chars`, `max-output-tokens`, `concurrency`, `timeout-seconds`, `extra-instructions`, `pr-number`, `repository`, `github-token`, `github-api-url`. See [`action.yml`](action.yml).
+- **Other settings** have no input, but for a setting without an input, a `DIFF_LEPPARD_*` variable in the step's `env:` works (the inputs set their own variables, which win), for example `DIFF_LEPPARD_VERIFY_FINDINGS: off` for faster reviews, or `DIFF_LEPPARD_CHECK_DESCRIPTION: true`. A repo's `.diff-leppard.json` on the base branch applies too, except for `minimumSeverity`, which the `min-severity` input (default `minor`) overrides.
+- **Context:** the Action reads the PR through the API, so changed files are shown whole and guidelines are used, but related-code search and `agentic` are skipped: they need the PR's head commit in the workspace, which the example doesn't fetch. (Fetching it doesn't run anything from the PR, but think it through for `issue_comment` triggers and fork PRs.) With the extra context and the verification pass, reviews take about twice as long as plain hunks; keep a generous `timeout-minutes`.
 
 ## watch: automatic reviews across all your repos
 
@@ -285,12 +289,14 @@ A few things to know:
 - **State:** reviewed PRs are recorded in `~/.local/state/diff-leppard/watch.json`. A lock file prevents overlapping runs.
 - **Failures:** a failed review is retried up to 3 times per commit.
 - **Pending reviews:** if you already have a pending review on a PR, it's skipped, because GitHub allows only one pending review per person.
+- **Context:** watch reads each PR through the API, so related-code search is skipped and `agentic` has no effect (it logs a warning for each PR).
+- **Repo config:** a PR's own `.diff-leppard.json` (from its base branch) applies. If it has none, watch currently falls back to the `.diff-leppard.json` of the directory you started it in, so start it outside any repo.
 
 To keep it running, use the [systemd user service](docs/watch/diff-leppard-watch.service) on Linux or the [launchd agent](docs/watch/me.diffleppard.watch.plist) on macOS. Both include install instructions.
 
 ## pre-commit
 
-Add Diff Leppard to [pre-commit](https://pre-commit.com). At the `pre-commit` stage it reviews your staged changes; at `pre-push` it reviews the commits being pushed. A review takes seconds to minutes, so `pre-push` or `manual` usually suit it better than every commit.
+Add Diff Leppard to [pre-commit](https://pre-commit.com). At the `pre-commit` stage it reviews your staged changes; at `pre-push` it reviews the commits being pushed. A review can take a few minutes, so `pre-push` or `manual` usually suit it better than every commit. Add `--verify off` to `args` for a faster pass.
 
 ```yaml
 # .pre-commit-config.yaml
@@ -321,7 +327,7 @@ This repo is also a Neovim plugin (0.10+). It runs the CLI, so install that firs
 | `:DiffLeppardPR [pr]` | A GitHub PR (read-only); with no argument, this branch's PR |
 | `:DiffLeppardCancel`, `:DiffLeppardClear`, `:DiffLeppardShow` | Stop the review, clear findings, show the last ones again |
 
-Reviews run in the background. Findings show up as diagnostics (critical and major as errors, minor as warnings, nits as hints) and in the quickfix list. `:checkhealth diff-leppard` checks the CLI and the model server, and `:help diff-leppard` lists the `setup()` options (`cmd`, `args`, `minimum_severity`, …).
+Reviews run in the background. Findings show up as diagnostics (critical and major as errors, minor as warnings, nits as hints) and in the quickfix list. `:checkhealth diff-leppard` checks the CLI and the model server, and `:help diff-leppard` lists the `setup()` options (`cmd`, `args`, `minimum_severity`, …). `args` are passed to the CLI, so `{ "--verify", "off" }` or `{ "--agentic" }` work there. `minimum_severity` only filters what the CLI returns; the CLI's own `minimumSeverity` (default `minor`) applies first. `:DiffLeppardPR` puts findings on your local files without checking that the PR's head is checked out, so line numbers can be off on another branch.
 
 ## MCP server
 
@@ -350,7 +356,7 @@ claude mcp add diff-leppard -- diff-leppard mcp            # Claude Code
 { "servers": { "diff-leppard": { "type": "stdio", "command": "diff-leppard", "args": ["mcp"] } } }
 ```
 
-CLI flags work too, e.g. `"args": ["mcp", "--model", "qwen2.5-coder:32b"]`. Run with `-v` to log requests to stderr. For Claude Code, the [plugin](#claude-code-plugin) is the lighter option: its skill drives the CLI directly.
+CLI flags work too and apply to every review the server runs, e.g. `"args": ["mcp", "--model", "qwen2.5-coder:32b"]`, or `"--verify", "off"` for faster reviews. The tools don't take a title or description, so for `review_local_changes` the description check (if turned on) only has commit messages to go on, with `base` or `range`. Run with `-v` to log requests to stderr. For Claude Code, the [plugin](#claude-code-plugin) is the lighter option: its skill drives the CLI directly.
 
 ## Claude Code plugin
 
@@ -414,7 +420,7 @@ This applies to every flavor:
 
 ## Project-specific guidelines
 
-Add `.github/code-review-instructions.md` (configurable via `instructionsFile`) to a repo and its contents get added to the prompt. For PRs it's read from the base branch. For example:
+Add `.github/code-review-instructions.md` (configurable via `instructionsFile`) to a repo and its contents get added to the prompt. If it doesn't exist, the first of `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md` and `CONTRIBUTING.md` is used instead, trimmed to fit if it's long, keeping the sections most likely to matter for review (`instructionsFallback`; `[]` turns this off). So those files are sent to your model too. For PRs they're read from the base branch. For example:
 
 ```md
 - This is a WordPress plugin. Flag output that isn't escaped (esc_html, esc_attr, wp_kses), missing nonce checks, and missing capability checks.
@@ -423,11 +429,33 @@ Add `.github/code-review-instructions.md` (configurable via `instructionsFile`) 
 
 For personal or global rules, use `extraInstructions` (or the Action's `extra-instructions` input).
 
+## Platform differences
+
+Every surface runs the same review, but they don't all get the same context or read the same settings. The `gh` extension, pre-commit, Neovim and the Claude Code plugin all run the CLI, so they behave like it.
+
+| | CLI | MCP server | VS Code | GitHub Action | watch |
+| --- | --- | --- | --- | --- | --- |
+| Changed files whole, guidelines, verification | yes | yes | yes | yes | yes |
+| Related code from elsewhere in the repo | yes (PRs: when the head commit is fetched locally) | yes (PRs: when the head commit is fetched in `path`) | yes (PRs: when the head commit is in the workspace's repo) | only if the workflow fetches the PR head commit | no |
+| `agentic` | `--agentic` | launch flag | no | no input (needs the PR head commit fetched) | no |
+| Changing `verifyFindings` | `--verify`, config or env | launch flag, config or env | setting | step `env:` | `--verify`, config or env |
+| Changing `checkDescription` | config, env or repo config | config, env or repo config | setting | step `env:` or repo config | config, env or repo config |
+| Title and description for the description check | `--title`, `--description`, commit messages, PR body | PR body, or commit messages for local changes | PR body | PR body | PR body |
+| Repo `.diff-leppard.json` | yes (PRs: from the base branch) | yes | no | yes, but `min-severity` always wins | yes, but see below |
+
+Other differences to be aware of:
+
+- **watch** falls back to the starting directory's `.diff-leppard.json` for repos that have none of their own, so start it outside any repo.
+- **The Action's `min-severity`** input defaults to `minor` and overrides a repo's `minimumSeverity`. Set the input instead.
+- **Neovim's `minimum_severity`** filters on top of the CLI's own `minimumSeverity`, so the stricter of the two wins.
+- **Neovim's `:DiffLeppardPR`** puts findings on your local files without checking that the PR's head is checked out.
+- **VS Code** doesn't have `agentic` or `maxToolCalls`, and ignores `.diff-leppard.json`. In an untrusted workspace it ignores the workspace's values for where requests go (`baseUrl`, `provider`, headers, body), which guideline files are read, and GitHub settings, but not for `model`, concurrency, output tokens, timeouts or verification.
+
 ## Settings reference
 
 The names below are CLI config keys:
 
-- **VS Code:** prefix them with `diffLeppard.`.
+- **VS Code:** prefix them with `diffLeppard.`, except `agentic` and `maxToolCalls`, which are CLI only. VS Code doesn't read `.diff-leppard.json`.
 - **Environment variables:** use `DIFF_LEPPARD_` plus the upper-snake-case name, for example `DIFF_LEPPARD_MAX_CHUNK_CHARS`. `github.*` keys become `DIFF_LEPPARD_GITHUB_*`, for example `DIFF_LEPPARD_GITHUB_ATTRIBUTION=false`.
 - **Validation:** values are checked, so `concurrency: "abc"` is an error rather than a silent no-op.
 
@@ -455,8 +483,8 @@ The names below are CLI config keys:
 | `fullFileMaxChars` | `40000` | Show changed files whole up to this size, else widen hunks; `0` = hunks only. See [what the model sees](#what-the-model-sees) |
 | `relatedMaxChars` | `6000` | Related code from elsewhere in the repo per request; `0` = off |
 | `checkDescription` | `false` | Report description claims the diff doesn't support (off by default: more false alarms than real ones in testing) |
-| `verifyFindings` | `critical-major` | Second look at findings before reporting: `off`, `critical-major` or `all` |
-| `agentic`, `maxToolCalls` | `false`, `15` | Experimental read-only tools for the model (needs tool calling) |
+| `verifyFindings` | `critical-major` | Second look at findings before reporting: `off`, `critical-major` or `all`. Not allowed in a repo's `.diff-leppard.json` |
+| `agentic`, `maxToolCalls` | `false`, `15` | CLI only (not a VS Code setting). Experimental read-only tools for the model (needs tool calling and a local checkout) |
 | `github.apiUrl`, `github.reviewEvent`, `github.suggestionBlocks` | `https://api.github.com`, `COMMENT`, `false` | `reviewEvent` is what `--post` and the posting prompt use |
 | `github.attribution` | `true` | End posted reviews with "Review generated by Diff Leppard, running `<model>`" |
 
@@ -466,7 +494,7 @@ The names below are CLI config keys:
 - **"Model did not return parseable JSON"**: the model ignored the format. Try `jsonMode: json_schema` (vLLM, recent Ollama, LM Studio), a stronger model, or a lower temperature. Check the debug log for the raw reply: the VS Code output channel at Debug level, or `DIFF_LEPPARD_DEBUG=1` for the CLI.
 - **Output cut off**: raise `maxOutputTokens`. Diff Leppard salvages complete findings from cut-off JSON, but it logs a warning.
 - **"The model got stuck repeating itself … stopped it early"**: the model fell into a loop, so Diff Leppard cut it off instead of letting it run to `maxOutputTokens`, and kept whatever findings parsed. If it happens often, raise `temperature` slightly (0.2–0.3 loops less often than 0–0.1), try `jsonMode: json_schema`, or add a repetition penalty with `extraBody`, such as `{"repetition_penalty": 1.05}` on vLLM.
-- **Slow or timing out**: turn off thinking (see [Reasoning models](#picking-a-model-and-sizing-the-context)), set a smaller `maxChunkChars`, or raise `requestTimeoutSeconds`.
+- **Slow or timing out**: turn off thinking (see [Reasoning models](#picking-a-model-and-sizing-the-context)), use `--verify off` or `--no-context` (see [What the model sees](#what-the-model-sees)), set a smaller `maxChunkChars`, or raise `requestTimeoutSeconds`.
 - **"Prompt too long" / context-length errors**: the server's reported context is larger than what it actually serves (or `maxOutputTokens` is high). Set `maxChunkChars` explicitly.
 
 ## Contributing

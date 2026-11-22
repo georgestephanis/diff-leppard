@@ -69,10 +69,12 @@ Model server (override config files):
       --no-stream
       --max-chunk-chars <n>
       --concurrency <n>
+
+Review:
       --min-severity <s>    critical | major | minor | nit
       --verify <mode>       Second look at findings before reporting: off | critical-major (default) | all
       --no-context          Hunks only: no whole files, related code or AGENTS.md fallback (instructionsFile still applies)
-      --agentic             Experimental: the model may read files and search the repo (needs tool calling)
+      --agentic             Experimental: the model may read files and search the repo (needs tool calling and a local checkout)
 
 Watch:
       --once                Check once and exit (for cron, systemd timers, launchd)

@@ -40,7 +40,7 @@ inputs:
     description: Fail the job if any finding is at or above this severity. Empty = never fail on findings.
     default: ""
   max-chunk-chars:
-    description: Max diff characters per model request. Empty or 0 = auto (sized to the context window the server reports, e.g. vLLM's max_model_len)
+    description: Characters per model request (the diff plus guidelines and surrounding code). Empty or 0 = auto (sized to the context window the server reports, e.g. vLLM's max_model_len)
     default: ""
   max-output-tokens:
     description: Max tokens the model may generate per request
@@ -52,7 +52,7 @@ inputs:
     description: Per-request timeout
     default: ""
   extra-instructions:
-    description: Extra review guidelines added to the prompt. The repo's .github/code-review-instructions.md (on the base branch) is used automatically.
+    description: Extra review guidelines added to the prompt. The repo's .github/code-review-instructions.md (on the base branch) is used automatically, or AGENTS.md, CLAUDE.md, .github/copilot-instructions.md or CONTRIBUTING.md if it has none.
     default: ""
   pr-number:
     description: Pull request number

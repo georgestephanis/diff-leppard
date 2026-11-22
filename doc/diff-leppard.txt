@@ -26,6 +26,8 @@ COMMANDS                                               *diff-leppard-commands*
 :DiffLeppardPR [pr]                                           *:DiffLeppardPR*
     Review a GitHub PR: a number, URL or owner/repo#n. With no argument,
     the PR for the current branch. Read-only; nothing is posted.
+    Findings are placed on your local files, so check out the PR's head
+    first or line numbers may be off.
 
 :DiffLeppardCancel                                        *:DiffLeppardCancel*
     Stop the running review.
@@ -45,7 +47,7 @@ Optional. The defaults:
 >lua
   require("diff-leppard").setup({
     cmd = { "diff-leppard" },     -- or { "npx", "diff-leppard" }, { "node", "/path/dist/cli.js" }
-    args = {},                    -- extra CLI args for every review, e.g. { "--model", "x" }
+    args = {},                    -- extra CLI args for every review, e.g. { "--verify", "off" }
     diagnostics = true,           -- findings as vim.diagnostic entries
     quickfix = true,              -- findings in the quickfix list
     open_quickfix = true,         -- open it when there are findings
@@ -63,6 +65,13 @@ ReviewResult), if you want to build on it.
 NOTES                                                     *diff-leppard-notes*
 
 Findings are suggestions from a model. Check them before acting on them.
+
+`minimum_severity` filters what the CLI returns. The CLI's own
+`minimumSeverity` setting (default "minor") is applied first, so nits only
+show up if you lower that too.
+
+A review can take a few minutes. For a quicker pass, add
+`{ "--verify", "off" }` to `args`.
 
 Model server problems (unreachable, 401, slow, unparseable output): run
 `diff-leppard test` and `diff-leppard config` in a terminal, and see the
