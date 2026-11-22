@@ -99,8 +99,8 @@ function readSettings() {
         },
     };
 }
-/** Repo config keys VS Code restricts in untrusted workspaces (package.json), so a repo file can't set them there either. */
-const UNTRUSTED_SKIP = ['instructionsFile', 'instructionsFallback'];
+/** Repo config keys that are also restricted in untrusted workspaces (package.json), so a repo file can't set them there either. */
+const UNTRUSTED_SKIP = ['instructionsFile', 'instructionsFallback', 'maxChunkChars'];
 /**
  * Apply a repo's .diff-leppard.json (the keys the CLI allows) over the user's settings. Settings made for this
  * workspace in VS Code still win, since they're the more specific choice.
@@ -118,6 +118,7 @@ function applyRepoConfig(s, repo, log) {
     }
     if (checked.ignored.length)
         log.warn(`${repo.source}: ignoring ${checked.ignored.join(', ')} (a repo may only set review preferences).`);
+    // Not resource-scoped, like readSettings: workspace values count, per-folder values in a multi-root workspace don't.
     const c = vscode.workspace.getConfiguration('diffLeppard');
     const out = { ...s, llm: { ...s.llm } };
     const applied = [];
@@ -414,7 +415,10 @@ class Controller {
         const root = await this.pickRepoRoot(true);
         if (!root)
             return;
-        const s = applyRepoConfig(readSettings(), await (0, config_1.readRepoConfig)(root).catch(() => undefined), this.logger);
+        const s = applyRepoConfig(readSettings(), await (0, config_1.readRepoConfig)(root).catch((e) => {
+            this.logger.warn(`${config_1.REPO_CONFIG_FILE}: ${e.message}; ignoring it.`);
+            return undefined;
+        }), this.logger);
         const llm = await this.llmClient(s);
         if (!llm)
             return;
@@ -484,7 +488,8 @@ class Controller {
             const { pr, files, skipped } = await (0, pr_1.loadPullRequest)(gh, ref.repo, ref.number, undefined, this.logger);
             // Like the CLI: the repo's .diff-leppard.json comes from the PR's base branch, never from the PR itself.
             const s = applyRepoConfig(s0, await this.repoConfigAt(gh, ref.repo, pr.baseSha), this.logger);
-            const llm = s.llm.model && s.llm.model !== llm0.model ? new llm_1.LlmClient(await this.llmConfig(s), this.logger) : llm0;
+            // Rebuild the client so the repo's model and temperature apply; keep the model picked above if the repo sets none.
+            const llm = new llm_1.LlmClient({ ...(await this.llmConfig(s)), model: s.llm.model || llm0.model }, this.logger);
             const exclude = (0, diff_1.makeExcluder)(s.excludeGlobs);
             const local = await (0, context_1.localViewAt)(root, pr.headSha);
             const ctx = await (0, flow_1.prepareContext)({
@@ -512,7 +517,7 @@ class Controller {
             });
             if (s.agentic && !local)
                 this.logger.warn('Agentic mode needs the PR head commit in this workspace (fetch it); reviewed without tools.');
-            return { pr, result, s };
+            return { pr, result };
         });
         if (!out)
             return;

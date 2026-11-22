@@ -96,6 +96,8 @@ runs:
     - uses: actions/setup-node@v5
       with:
         node-version: "22"
+        # Never read or cache anything from the workspace: it may hold a PR's code (see the example's checkout step).
+        package-manager-cache: false
     - name: Review pull request
       id: review
       shell: bash

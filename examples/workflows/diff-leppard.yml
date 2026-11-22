@@ -71,8 +71,8 @@ jobs:
       #     tags: tag:ci
 
       # Optional: with the PR's head commit in the workspace, the review also searches the rest of the repo
-      # for code the change uses. Nothing from the PR is run (the review only reads files through git), but
-      # it's PR code on a runner that has your secrets, so leave this off if that's a concern.
+      # for code the change uses. Nothing from the PR is run or cached (the review only reads files through
+      # git), but it's PR code on a runner that has your secrets, so leave this off if that's a concern.
       # - uses: actions/checkout@v5
       #   with:
       #     ref: refs/pull/${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}/head
