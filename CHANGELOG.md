@@ -7,11 +7,11 @@
   - Related code: names the change uses are searched for elsewhere in the repo, and folders it names are listed with their README and last commit (`relatedMaxChars`, #31).
   - `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md` or `CONTRIBUTING.md` is used as review guidelines when `instructionsFile` doesn't exist, trimmed to the sections that matter (`instructionsFallback`, `maxInstructionsChars`, #34).
   - Optionally, the change description's claims are checked against the diff (`checkDescription`, off by default, #33). `local --range` and `--base` use the commit messages as the description; `--title` and `--description` set them explicitly.
-- **Verification pass** (`verifyFindings`, default `critical-major`, `--verify`): each serious finding gets a second request that must confirm it and quote the code. Rejected findings are dropped and listed as `rejectedFindings` in JSON (#32).
+- **Verification pass** (`verifyFindings`, default `critical-major`, `--verify`): each serious finding gets a second request that must confirm it and quote the code. Rejected findings are dropped and listed as `rejectedFindings` in JSON (#32). Findings on files outside the change, or naming no file, are checked too (against that file read from the reviewed version plus the change, or against the whole change); one with nothing to check against is lowered one step.
 - **Experimental `--agentic` mode**: the model may call read-only `read_file`, `grep` and `list_dir` tools, confined to the repo at the reviewed commit, with a call and output budget. Falls back to a normal review when the server doesn't do tool calling (#35).
 - **Evaluation set:** `npm run eval` runs small cases with known answers and traps and reports recall, false positives and time (#29). See `eval/README.md`.
 - `--no-context` reviews hunks only, as before.
-- **Reviews are slower by default:** requests are bigger, and each critical or major finding gets one more request. In testing with a 27B model, reviews took several times as long (one 8-range run averaged about 3.7×; times varied a lot between runs), and false critical/major findings fell from 5 to 0 or 1 per run on the test set. `--verify off` and `--no-context` trade that back for speed.
+- **Reviews are slower by default:** requests are bigger, and each critical or major finding gets one more request. In testing with a 27B model, reviews took about twice as long per range (rough: one 1.3.0 run, on a different set of ranges), and false critical/major findings went from 5 in a 1.3.0 run (3–6 per run on the new defaults before findings outside the change were verified) to 0 in each of 3 runs. `--verify off` and `--no-context` trade that back for speed.
 
 ## 1.3.0 (2026-11-10)
 

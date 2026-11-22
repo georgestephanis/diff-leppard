@@ -281,7 +281,7 @@ export function renderWithContext(f: FileDiff, content: string, radius: number):
   return out.join('\n');
 }
 
-const RADII = [Infinity, 400, 200, 120, 80, 50, 30];
+export const RADII = [Infinity, 400, 200, 120, 80, 50, 30];
 
 /**
  * The richest rendering of a changed file that fits in maxChars: the whole file, else hunks widened by as

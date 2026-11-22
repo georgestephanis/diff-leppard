@@ -159,7 +159,7 @@ export async function prepareContext(p: {
   guideView?: RepoView;
   log: Logger;
   signal?: AbortSignal;
-}): Promise<Pick<ReviewOptions, 'maxChunkChars' | 'contextChars' | 'related' | 'relatedChars' | 'contextNotes'> & { repoInstructions?: string }> {
+}): Promise<Pick<ReviewOptions, 'maxChunkChars' | 'contextChars' | 'related' | 'relatedChars' | 'contextNotes' | 'view'> & { repoInstructions?: string }> {
   const s = p.settings;
   const total = await resolveChunkChars(p.llm, s.maxChunkChars, s.maxOutputTokens, p.log, p.signal);
   const plan = planBudget(total, s);
@@ -189,7 +189,7 @@ export async function prepareContext(p: {
     }
   }
   p.log.info(`Request budget ${total} chars: diff ${maxChunkChars}, guidelines ${repoInstructions?.length ?? 0}, related up to ${s.relatedMaxChars ? plan.related : 0}+`);
-  return { maxChunkChars, contextChars, related, relatedChars: { reserve: plan.related, max: s.relatedMaxChars }, contextNotes: notes, repoInstructions };
+  return { maxChunkChars, contextChars, related, relatedChars: { reserve: plan.related, max: s.relatedMaxChars }, contextNotes: notes, repoInstructions, view: p.view };
 }
 
 /** Commit messages of a range as a change title + description (at most 20 commits / 4000 chars). */

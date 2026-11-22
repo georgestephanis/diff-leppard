@@ -1,5 +1,5 @@
 import type { VerifyMode } from './config';
-import { RelatedSnippet, renderRelated } from './context';
+import { RelatedSnippet, renderRelated, RepoView } from './context';
 import { verifyFindings } from './verify';
 import { addedLines, Chunk, chunkDiff, commentableLines } from './diff';
 import { agenticReply, AgentOptions } from './agent';
@@ -32,6 +32,8 @@ export interface ReviewOptions {
   contextNotes?: string[];
   /** Second look at findings before reporting them (default off here; the CLI and extension default to 'critical-major'). */
   verify?: VerifyMode;
+  /** The repo at the reviewed commit; verification reads files outside the change through it. */
+  view?: RepoView;
   /** Experimental agentic mode: read-only tools for the model (the tool-output budget is set per request). */
   agent?: Omit<AgentOptions, 'budgetChars'>;
 }
@@ -135,6 +137,8 @@ export async function runReview(files: FileDiff[], opts: ReviewOptions): Promise
       concurrency: opts.concurrency,
       log: opts.log,
       signal: opts.signal,
+      view: opts.view,
+      exclude: opts.exclude,
     });
     if (opts.signal?.aborted) throw new CancelledError();
     all = v.kept;
