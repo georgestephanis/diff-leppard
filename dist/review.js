@@ -110,6 +110,8 @@ async function runReview(files, opts) {
             concurrency: opts.concurrency,
             log: opts.log,
             signal: opts.signal,
+            view: opts.view,
+            exclude: opts.exclude,
         });
         if (opts.signal?.aborted)
             throw new CancelledError();

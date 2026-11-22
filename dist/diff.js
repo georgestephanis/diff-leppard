@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.RADII = void 0;
 exports.parseUnifiedDiff = parseUnifiedDiff;
 exports.parsePatchHunks = parsePatchHunks;
 exports.fileDiffFromContent = fileDiffFromContent;
@@ -307,7 +308,7 @@ function renderWithContext(f, content, radius) {
     }
     return out.join('\n');
 }
-const RADII = [Infinity, 400, 200, 120, 80, 50, 30];
+exports.RADII = [Infinity, 400, 200, 120, 80, 50, 30];
 /**
  * The richest rendering of a changed file that fits in maxChars: the whole file, else hunks widened by as
  * many lines as fit. Undefined if the file's content isn't loaded or even modest widening doesn't fit.
@@ -315,7 +316,7 @@ const RADII = [Infinity, 400, 200, 120, 80, 50, 30];
 function renderFileContext(f, maxChars) {
     if (!f.content || maxChars <= 0)
         return undefined;
-    for (const r of RADII) {
+    for (const r of exports.RADII) {
         const text = renderWithContext(f, f.content, r);
         if (text.length <= maxChars)
             return { text, whole: !Number.isFinite(r) };

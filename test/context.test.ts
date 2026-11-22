@@ -25,7 +25,7 @@ import { LlmClient, LlmConfig } from '../src/llm';
 import { buildReviewMessages } from '../src/prompt';
 import { runReview } from '../src/review';
 import { nullLogger } from '../src/types';
-import { evidenceInCode } from '../src/verify';
+import { evidenceInCode, verifyFindings } from '../src/verify';
 
 // ---------------------------------------------------------------------------
 // A scratch git repo
@@ -54,13 +54,13 @@ before(() => {
   write('data/rows/b.json', '{}');
   write('data/README.md', '# Data\nThe rows/ snapshot predates the cleanup; re-export before importing.\n');
   write('scripts/import.py', 'SRC = ROOT / "data" / "rows"\n\ndef load():\n    return 1\n');
-  write('scripts/other.py', 'from scripts.import import load_rows\nload_rows()\n');
+  write('scripts/other.py', 'from scripts.import import fetch_items\nfetch_items()\n');
   write('AGENTS.md', '# Guide\nIntro.\n\n## Style\n' + 'x'.repeat(400) + '\n\n## Deploys\nMerging to main deploys to production.\n');
   g('add', '-A');
   g('commit', '-q', '-m', 'base');
   from = g('rev-parse', 'HEAD').trim();
   write('styles/card.css', CSS_AFTER);
-  write('scripts/import.py', 'SRC = ROOT / "data" / "rows"\n\ndef load_rows():\n    return 2\n');
+  write('scripts/import.py', 'SRC = ROOT / "data" / "rows"\n\ndef fetch_items():\n    return 2\n');
   g('add', '-A');
   g('commit', '-q', '-m', 'Card padding and rename', '-m', 'Only affects cards without full-width.');
   to = g('rev-parse', 'HEAD').trim();
@@ -123,9 +123,9 @@ test('chunkDiff renders loaded files whole when they fit, hunks otherwise', () =
 test('extractIdentifiers and extractPaths', () => {
   const files = rangeDiff();
   const py = files.find((f) => f.path === 'scripts/import.py')!;
-  py.content = 'SRC = ROOT / "data" / "rows"\n\ndef load_rows():\n    return 2\n';
+  py.content = 'SRC = ROOT / "data" / "rows"\n\ndef fetch_items():\n    return 2\n';
   const ids = extractIdentifiers(py);
-  assert.ok(ids.needles.includes('load_rows'));
+  assert.ok(ids.needles.includes('fetch_items'));
   assert.ok(ids.paths.includes('data/rows'));
   assert.ok(extractIdentifiers(files.find((f) => f.path === 'styles/card.css')!).needles.includes('.card-inner'));
   assert.deepEqual(extractPaths('see https://x.y/a/b and "src/lib/*.ts" and join("a", "b") and docs/guide.md'), ['src/lib', 'a/b', 'docs/guide.md']);
@@ -137,7 +137,7 @@ test('gitRepoView reads, searches and lists at a commit; stays inside the repo',
   assert.equal(await gitRepoView(repo, from).read('styles/card.css'), CSS_BEFORE);
   assert.equal(await v.read('../etc/passwd'), undefined);
   assert.equal(await v.read('nope.txt'), undefined);
-  const hits = await v.grep!(['load_rows'], 10);
+  const hits = await v.grep!(['fetch_items'], 10);
   assert.deepEqual(hits.map((h) => `${h.path}:${h.line}`).sort(), ['scripts/import.py:3', 'scripts/other.py:1', 'scripts/other.py:2']);
   assert.deepEqual(await v.list!('data/rows', 10), ['data/rows/a.json', 'data/rows/b.json']);
   assert.match((await v.lastChange!('data/rows'))!, /^[0-9a-f]+ 2026-01-02 base$/);
@@ -206,11 +206,11 @@ test('evidenceInCode ignores line numbers and whitespace, rejects invented code'
 
 test('agent tools are read-only and confined to the repo', async () => {
   const o = { view: gitRepoView(repo, to), before: gitRepoView(repo, from), maxToolCalls: 5, budgetChars: 10000, exclude: (p: string) => p.endsWith('.lock') };
-  assert.match(await runTool('read_file', { path: 'scripts/import.py' }, o), /3 {2}def load_rows/);
+  assert.match(await runTool('read_file', { path: 'scripts/import.py' }, o), /3 {2}def fetch_items/);
   assert.match(await runTool('read_file', { path: 'scripts/import.py', before: true }, o), /def load\(\)/);
   assert.match(await runTool('read_file', { path: '../../etc/passwd' }, o), /^error/);
   assert.match(await runTool('read_file', { path: 'x.lock' }, o), /excluded/);
-  assert.match(await runTool('grep', { text: 'load_rows', path_glob: 'scripts/other.py' }, o), /^scripts\/other\.py:1:/);
+  assert.match(await runTool('grep', { text: 'fetch_items', path_glob: 'scripts/other.py' }, o), /^scripts\/other\.py:1:/);
   assert.match(await runTool('list_dir', { path: 'data/rows' }, o), /2 files, last changed by commit/);
   assert.match(await runTool('rm', {}, o), /unknown tool/);
 });
@@ -284,7 +284,7 @@ test('agentic mode runs tools, then parses the answer; stops at the tool budget'
   const files = rangeDiff();
   replies.length = 0;
   seen.length = 0;
-  replies.push({ content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'grep', arguments: '{"text":"load_rows"}' } }] });
+  replies.push({ content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'grep', arguments: '{"text":"fetch_items"}' } }] });
   replies.push({ content: '{"summary":"s","findings":[{"file":"scripts/import.py","line":3,"severity":"major","title":"Rename breaks other.py","body":"b"}]}' });
   const result = await runReview(files, {
     llm: new LlmClient(cfg()),
@@ -335,6 +335,53 @@ test('verification keeps findings when the check gives no answer, and never demo
   assert.deepEqual(result.findings.map((f) => [f.title, f.severity]), [['Cut off', 'major'], ['Unsure', 'major']]);
   assert.equal(result.rejectedFindings, undefined);
   assert.equal(seen[1].max_tokens, 512, 'verification uses the normal output budget');
+});
+
+test('verification checks findings outside the change: unchanged files from the repo, unnamed ones against the whole change', async () => {
+  const files = rangeDiff();
+  const finding = (file: string, title: string) => ({ file, line: 2, severity: 'major', title, body: 'b' });
+  replies.length = 0;
+  seen.length = 0;
+  replies.push({ content: JSON.stringify({ summary: 's', findings: [finding('scripts/other.py', 'Blames a context file'), finding('', 'Names no file'), finding('data/README.md', 'Excluded file')] }) });
+  replies.push({ content: '{"verdict":"rejected","evidence":"","reason":"not in the change"}' });
+  replies.push({ content: '{"verdict":"rejected","evidence":"","reason":"no such code"}' });
+  replies.push({ content: '{"verdict":"rejected","evidence":"","reason":"no"}' });
+  const result = await runReview(files, {
+    llm: new LlmClient(cfg()),
+    maxChunkChars: 20000,
+    concurrency: 1,
+    minimumSeverity: 'nit',
+    exclude: (p) => p.startsWith('data/'),
+    context: {},
+    log: nullLogger,
+    verify: 'critical-major',
+    view: gitRepoView(repo, to),
+  });
+  assert.deepEqual(result.findings, [], 'all three were checked and rejected');
+  assert.equal(seen.length, 4);
+  const asked = seen.slice(1).map((r) => r.messages[1].content as string);
+  const byTitle = (t: string) => asked.find((c) => c.includes(`Title: ${t}`))!;
+  // The unchanged file is read from the reviewed commit and shown together with the change.
+  assert.match(byTitle('Blames a context file'), /=== File: scripts\/other\.py \(not shown as part of the change/);
+  assert.match(byTitle('Blames a context file'), /fetch_items\(\)/);
+  assert.match(byTitle('Blames a context file'), /The change under review:/);
+  // No file named, or an excluded one: checked against the whole change, without reading the excluded file.
+  for (const t of ['Names no file', 'Excluded file']) {
+    assert.match(byTitle(t), /=== File: scripts\/import\.py/);
+    assert.doesNotMatch(byTitle(t), /not shown as part of the change/);
+  }
+  assert.doesNotMatch(byTitle('Excluded file'), /re-export before importing/, 'the excluded file is never read');
+});
+
+test('verification lowers a serious finding it has no code to check against', async () => {
+  replies.length = 0;
+  seen.length = 0;
+  const f = { file: 'gone.js', line: 1, severity: 'critical' as const, title: 'Unverifiable', body: 'b', inline: false };
+  const v = await verifyFindings([f], [], { llm: new LlmClient(cfg()), mode: 'critical-major', maxChars: 10000, concurrency: 1, log: nullLogger });
+  assert.deepEqual(v.kept.map((x) => x.severity), ['major']);
+  assert.equal(seen.length, 0, 'no request without code');
+  const kept = await verifyFindings([{ ...f, severity: 'major' }], [], { llm: new LlmClient(cfg()), mode: 'critical-major', minimumSeverity: 'major', maxChars: 10000, concurrency: 1, log: nullLogger });
+  assert.equal(kept.kept[0].severity, 'major', 'never below the threshold');
 });
 
 test('the description check runs only when one request sees the whole change', () => {

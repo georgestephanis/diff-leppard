@@ -5,7 +5,8 @@
  *
  * No `vscode` imports.
  */
-import { annotateFile, renderWithContext } from './diff';
+import { RepoView, safeRepoPath } from './context';
+import { annotateFile, RADII, renderWithContext } from './diff';
 import { LlmClient } from './llm';
 import { sanitizeText } from './markdown';
 import { parseJsonObject } from './parse';
@@ -56,6 +57,43 @@ export function codeForFinding(f: Finding, file: FileDiff | undefined, maxChars:
   return text.length <= maxChars ? text : text.slice(0, maxChars) + '\n…[cut]';
 }
 
+/** The whole change, for a finding that names no file in it: each changed file gets an equal share of the room. */
+export function codeForChange(files: FileDiff[], maxChars: number): string {
+  if (!files.length) return '';
+  const each = Math.floor(maxChars / files.length);
+  return files.map((file) => codeForFinding({ file: file.path, severity: 'minor', title: '', body: '', inline: false }, file, each)).filter(Boolean).join('\n\n');
+}
+
+/**
+ * A finding on a file the change didn't touch (the model often blames a file it only saw as context): that file
+ * around the line, read from the reviewed commit, followed by the change itself, since the finding is only
+ * real if the change causes or exposes it. Empty when the path isn't safe or the file can't be read.
+ */
+export async function codeForUnchangedFile(f: Finding, files: FileDiff[], view: RepoView, maxChars: number): Promise<string> {
+  const p = safeRepoPath(f.file);
+  if (!p) return '';
+  const content = await view.read(p, 2_000_000).catch(() => undefined);
+  if (content === undefined) return '';
+  const own = Math.floor(maxChars * 0.4);
+  // A hunk with no lines marks nothing as changed, so the file is shown as unchanged code around f.line.
+  const around: FileDiff = { path: p, status: 'modified', binary: false, hunks: f.line ? [{ header: '', oldStart: f.line, oldLines: 1, newStart: f.line, newLines: 1, lines: [] }] : [] };
+  let shown = '';
+  for (const r of RADII) {
+    if (Number.isFinite(r) && !f.line) break;
+    const text = renderWithContext(around, content, r);
+    if (text.length <= own) {
+      shown = text;
+      break;
+    }
+  }
+  if (!shown) shown = content.slice(0, own) + '\n…[cut]';
+  const header = `=== File: ${p} (not shown as part of the change; the finding is about this file) ===\n${shown}\n\nThe change under review:\n\n`;
+  return header + codeForChange(files, maxChars - header.length);
+}
+
+/** What review.ts names a finding whose file the model didn't give. */
+const UNKNOWN_FILE = '(unknown file)';
+
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
 
 /** True when every non-empty evidence line appears in the code shown (ignoring whitespace, line numbers and markers). */
@@ -74,6 +112,12 @@ function lower(s: Severity): Severity {
   return SEVERITIES[Math.min(SEVERITIES.length - 1, severityRank(s) + 1)];
 }
 
+/** Lower one step, unless that would drop it below the reported threshold (it would silently disappear). */
+function lowerWithin(s: Severity, minimumSeverity: Severity | undefined): Severity {
+  const lowered = lower(s);
+  return severityRank(lowered) > severityRank(minimumSeverity ?? 'nit') ? s : lowered;
+}
+
 export interface VerifyOptions {
   llm: LlmClient;
   mode: VerifyMode;
@@ -83,6 +127,10 @@ export interface VerifyOptions {
   concurrency: number;
   log: Logger;
   signal?: AbortSignal;
+  /** The repo at the reviewed commit, to check findings on files outside the change. */
+  view?: RepoView;
+  /** Paths excluded from review; findings on them aren't read from the repo. */
+  exclude?: (path: string) => boolean;
 }
 
 /** Verify findings; returns the kept ones (with `verified`/`evidence`) and the rejected ones. */
@@ -98,8 +146,18 @@ export async function verifyFindings(findings: Finding[], files: FileDiff[], opt
       const { f, i } = todo[next++];
       if (opts.signal?.aborted) return;
       const file = files.find((x) => x.path === f.file);
-      const code = codeForFinding(f, file, opts.maxChars);
-      if (!code) continue;
+      let code = codeForFinding(f, file, opts.maxChars);
+      // Not a changed file: read it from the repo, or, if it names no readable file, check it against the whole change.
+      // Normalise the path before the exclude check, so "x.pem/" or "a/./b" can't slip past a glob.
+      const repoPath = !file && f.file !== UNKNOWN_FILE ? safeRepoPath(f.file) : undefined;
+      if (!code && repoPath && opts.view && !opts.exclude?.(repoPath)) code = await codeForUnchangedFile({ ...f, file: repoPath }, files, opts.view, opts.maxChars);
+      if (!code && !file) code = codeForChange(files, opts.maxChars);
+      if (!code) {
+        // Nothing to check it against: don't let it through at full strength.
+        out[i] = { ...f, severity: lowerWithin(f.severity, opts.minimumSeverity) };
+        opts.log.warn(`Couldn't verify "${f.title}" (no code for ${f.file}); lowered to ${out[i]!.severity}.`);
+        continue;
+      }
       const user = [
         `Finding (${f.severity}${f.category ? `, ${f.category}` : ''}) at ${f.file}${f.line ? `:${f.line}` : ''}:`,
         `Title: ${f.title}`,
@@ -133,9 +191,7 @@ export async function verifyFindings(findings: Finding[], files: FileDiff[], opt
         } else if (verdict === 'confirmed') {
           out[i] = { ...f, verified: true, evidence: evidence || undefined };
         } else {
-          // Lower one step, unless that would drop it below the reported threshold.
-          const lowered = lower(f.severity);
-          out[i] = { ...f, severity: severityRank(lowered) > severityRank(opts.minimumSeverity ?? 'nit') ? f.severity : lowered };
+          out[i] = { ...f, severity: lowerWithin(f.severity, opts.minimumSeverity) };
         }
       } catch (e) {
         if (opts.signal?.aborted) return;
