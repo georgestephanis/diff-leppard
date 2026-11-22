@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { defaultSettings, VerifyMode } from './config';
+import { checkRepoConfig, defaultSettings, parseJsonc, readRepoConfig, REPO_CONFIG_FILE, RepoConfigInput, VerifyMode } from './config';
 import { githubRepoView, gitRepoView, INDEX, localViewAt } from './context';
 import { prepareContext } from './flow';
 import { makeExcluder } from './diff';
@@ -34,6 +34,8 @@ interface Settings {
   relatedMaxChars: number;
   checkDescription: boolean;
   verifyFindings: VerifyMode;
+  agentic: boolean;
+  maxToolCalls: number;
   maxOutputTokens: number;
   concurrency: number;
   showStatusBar: boolean;
@@ -78,6 +80,8 @@ function readSettings(): Settings {
     relatedMaxChars: c.get<number>('relatedMaxChars', d.relatedMaxChars),
     checkDescription: c.get<boolean>('checkDescription', d.checkDescription),
     verifyFindings: c.get<VerifyMode>('verifyFindings', d.verifyFindings),
+    agentic: c.get<boolean>('agentic', d.agentic),
+    maxToolCalls: c.get<number>('maxToolCalls', d.maxToolCalls),
     maxOutputTokens: c.get<number>('maxOutputTokens', d.maxOutputTokens),
     concurrency: c.get<number>('concurrency', d.concurrency),
     showStatusBar: c.get<boolean>('showStatusBar', true),
@@ -90,6 +94,40 @@ function readSettings(): Settings {
       attribution: c.get<boolean>('github.attribution', d.github.attribution),
     },
   };
+}
+
+/** Repo config keys that are also restricted in untrusted workspaces (package.json), so a repo file can't set them there either. */
+const UNTRUSTED_SKIP = ['instructionsFile', 'instructionsFallback', 'maxChunkChars'];
+
+/**
+ * Apply a repo's .diff-leppard.json (the keys the CLI allows) over the user's settings. Settings made for this
+ * workspace in VS Code still win, since they're the more specific choice.
+ */
+function applyRepoConfig(s: Settings, repo: RepoConfigInput | undefined, log: Logger): Settings {
+  if (!repo) return s;
+  let checked: { allowed: Record<string, unknown>; ignored: string[] };
+  try {
+    checked = checkRepoConfig(repo.json);
+  } catch (e) {
+    log.warn(`${repo.source}: ${(e as Error).message}; ignoring it.`);
+    return s;
+  }
+  if (checked.ignored.length) log.warn(`${repo.source}: ignoring ${checked.ignored.join(', ')} (a repo may only set review preferences).`);
+  // Not resource-scoped, like readSettings: workspace values count, per-folder values in a multi-root workspace don't.
+  const c = vscode.workspace.getConfiguration('diffLeppard');
+  const out: Settings = { ...s, llm: { ...s.llm } };
+  const applied: string[] = [];
+  for (const [k, v] of Object.entries(checked.allowed)) {
+    const i = c.inspect(k);
+    if (i?.workspaceValue !== undefined || i?.workspaceFolderValue !== undefined) continue;
+    if (!vscode.workspace.isTrusted && UNTRUSTED_SKIP.includes(k)) continue;
+    if (k === 'model') out.llm.model = String(v).trim();
+    else if (k === 'temperature') out.llm.temperature = v as number;
+    else (out as unknown as Record<string, unknown>)[k] = v;
+    applied.push(k);
+  }
+  if (applied.length) log.info(`config: ${repo.source} (${applied.join(', ')})`);
+  return out;
 }
 
 interface LastReview {
@@ -142,14 +180,28 @@ class Controller {
   // LLM
   // -------------------------------------------------------------------------
 
-  private async llmConfig(): Promise<LlmConfig> {
-    const s = readSettings();
+  /** A repo's .diff-leppard.json at a commit, read through the API (undefined if there's none or it doesn't parse). */
+  private async repoConfigAt(gh: GitHubClient, repo: RepoRef, sha: string | undefined): Promise<RepoConfigInput | undefined> {
+    if (!sha) return undefined;
+    const text = await gh.getFileContent(repo, REPO_CONFIG_FILE, sha).catch(() => undefined);
+    if (text === undefined) return undefined;
+    const source = `${repo.owner}/${repo.repo}@${sha.slice(0, 7)}:${REPO_CONFIG_FILE}`;
+    try {
+      const json = parseJsonc(text);
+      if (json && typeof json === 'object' && !Array.isArray(json)) return { json: json as Record<string, unknown>, source };
+    } catch (e) {
+      this.logger.warn(`${source}: ${(e as Error).message}; ignoring it.`);
+    }
+    return undefined;
+  }
+
+  private async llmConfig(s = readSettings()): Promise<LlmConfig> {
     return { ...s.llm, apiKey: (await this.ctx.secrets.get(SECRET_KEY)) || undefined };
   }
 
   /** Builds a client, asking the user to pick a model if none is configured. */
-  private async llmClient(): Promise<LlmClient | undefined> {
-    const cfg = await this.llmConfig();
+  private async llmClient(s = readSettings()): Promise<LlmClient | undefined> {
+    const cfg = await this.llmConfig(s);
     if (cfg.model) return new LlmClient(cfg, this.logger);
     const models = await new LlmClient(cfg, this.logger).listModels();
     if (!models.length) throw new Error(`The server at ${cfg.baseUrl} reported no models.`);
@@ -372,10 +424,13 @@ class Controller {
   }
 
   async reviewLocal(stagedOnly: boolean): Promise<void> {
-    const s = readSettings();
     const root = await this.pickRepoRoot(true);
     if (!root) return;
-    const llm = await this.llmClient();
+    const s = applyRepoConfig(readSettings(), await readRepoConfig(root).catch((e) => {
+      this.logger.warn(`${REPO_CONFIG_FILE}: ${(e as Error).message}; ignoring it.`);
+      return undefined;
+    }), this.logger);
+    const llm = await this.llmClient(s);
     if (!llm) return;
     const exclude = makeExcluder(s.excludeGlobs);
     const what = stagedOnly ? 'staged changes' : 'uncommitted changes';
@@ -396,6 +451,7 @@ class Controller {
       }
       const view = gitRepoView(root, stagedOnly ? INDEX : undefined);
       const ctx = await prepareContext({ files: diff.files, settings: { ...s, excludeGlobs: s.excludeGlobs }, llm, view, guideView: view, log: this.logger, signal });
+      const head = s.agentic ? await getHeadSha(root).catch(() => undefined) : undefined;
       return runReview(diff.files, {
         llm,
         ...ctx,
@@ -403,6 +459,7 @@ class Controller {
         minimumSeverity: s.minimumSeverity,
         exclude,
         verify: s.verifyFindings,
+        agent: s.agentic ? { view, before: head ? gitRepoView(root, head) : undefined, maxToolCalls: s.maxToolCalls, exclude } : undefined,
         context: { extraInstructions: s.extraInstructions, repoInstructions: ctx.repoInstructions },
         log: this.logger,
         signal,
@@ -422,27 +479,31 @@ class Controller {
   }
 
   async reviewPullRequest(arg?: unknown): Promise<void> {
-    const s = readSettings();
-    const host = webHostFromApiUrl(s.github.apiUrl);
+    const s0 = readSettings();
+    const host = webHostFromApiUrl(s0.github.apiUrl);
     const root = await this.pickRepoRoot(false);
     const repos = await githubRemotes(root, host);
-    const token = await this.githubToken(s);
-    const gh = new GitHubClient(s.github.apiUrl, token, this.logger);
+    const token = await this.githubToken(s0);
+    const gh = new GitHubClient(s0.github.apiUrl, token, this.logger);
 
     const ref =
       typeof arg === 'string' || typeof arg === 'number'
         ? parsePrReference(String(arg), host, repos[0]?.repo)
         : await this.choosePr(gh, host, repos);
     if (!ref) return;
-    const llm = await this.llmClient();
-    if (!llm) return;
-    const exclude = makeExcluder(s.excludeGlobs);
+    const llm0 = await this.llmClient(s0);
+    if (!llm0) return;
     const label = `${ref.repo.owner}/${ref.repo.repo}#${ref.number}`;
     this.log.info(`=== Reviewing ${label}`);
 
     const out = await this.withReviewProgress(`Diff Leppard: ${label}`, async (signal, report) => {
       report('Fetching pull request…');
       const { pr, files, skipped } = await loadPullRequest(gh, ref.repo, ref.number, undefined, this.logger);
+      // Like the CLI: the repo's .diff-leppard.json comes from the PR's base branch, never from the PR itself.
+      const s = applyRepoConfig(s0, await this.repoConfigAt(gh, ref.repo, pr.baseSha), this.logger);
+      // Rebuild the client so the repo's model and temperature apply; keep the model picked above if the repo sets none.
+      const llm = new LlmClient({ ...(await this.llmConfig(s)), model: s.llm.model || llm0.model }, this.logger);
+      const exclude = makeExcluder(s.excludeGlobs);
       const local = await localViewAt(root, pr.headSha);
       const ctx = await prepareContext({
         files,
@@ -460,12 +521,14 @@ class Controller {
         minimumSeverity: s.minimumSeverity,
         exclude,
         verify: s.verifyFindings,
+        agent: s.agentic && local ? { view: local, before: await localViewAt(root, pr.baseSha), maxToolCalls: s.maxToolCalls, exclude } : undefined,
         context: { title: pr.title, description: pr.body, checkDescription: s.checkDescription, extraInstructions: s.extraInstructions, repoInstructions: ctx.repoInstructions },
         log: this.logger,
         signal,
         onProgress: report,
         preSkipped: skipped,
       });
+      if (s.agentic && !local) this.logger.warn('Agentic mode needs the PR head commit in this workspace (fetch it); reviewed without tools.');
       return { pr, result };
     });
     if (!out) return;
@@ -485,11 +548,11 @@ class Controller {
       repoRoot: localMatches ? root : undefined,
       blobBaseUrl: `https://${host}/${ref.repo.owner}/${ref.repo.repo}/blob/${pr.headSha}`,
     };
-    await this.finish(result, meta, { repo: ref.repo, info: pr, apiUrl: s.github.apiUrl });
+    await this.finish(result, meta, { repo: ref.repo, info: pr, apiUrl: s0.github.apiUrl });
 
-    if (s.github.postReview === 'always') {
-      await this.post(s.github.reviewEvent);
-    } else if (s.github.postReview === 'ask') {
+    if (s0.github.postReview === 'always') {
+      await this.post(s0.github.reviewEvent);
+    } else if (s0.github.postReview === 'ask') {
       const inline = result.findings.filter((f) => f.inline).length;
       const choice = await vscode.window.showInformationMessage(
         `Review of ${label} done: ${result.findings.length} finding(s), ${inline} on changed lines. Post it to GitHub?`,
@@ -497,7 +560,7 @@ class Controller {
         'Post as draft (pending)',
         'Not now',
       );
-      if (choice === 'Post review') await this.post(s.github.reviewEvent === 'PENDING' ? 'COMMENT' : s.github.reviewEvent);
+      if (choice === 'Post review') await this.post(s0.github.reviewEvent === 'PENDING' ? 'COMMENT' : s0.github.reviewEvent);
       else if (choice === 'Post as draft (pending)') await this.post('PENDING');
     }
   }

@@ -369,8 +369,9 @@ async function main(argv) {
             loaded.settings.extraHeaders = { ...loaded.settings.extraHeaders, ...headers };
         return loaded;
     };
-    // PR reviews take repo config from the PR's base branch (below); local reviews from the working tree.
-    const isPr = !['local', 'watch', 'mcp', 'models', 'test', 'config'].includes(command);
+    // PR reviews (pr, watch) take repo config from each PR's base branch; local reviews from the working tree.
+    // watch must not read the starting directory's, or it would apply to every other repo's PRs.
+    const isPr = !['local', 'mcp', 'models', 'test', 'config'].includes(command);
     let { settings: s, sources, warnings } = await configure(isPr ? undefined : await (0, config_1.readRepoConfig)(root));
     // MCP: stdout is the protocol, so no spinner. Warnings (and -v info) still go to stderr, which clients log.
     const progress = new Progress(!o.quiet && command !== 'mcp', isTTY(process.stderr));
@@ -445,6 +446,8 @@ async function main(argv) {
         };
         if (!once)
             say(`watching every ${Math.round(intervalMs / 1000)}s (Ctrl-C to stop); state: ${stateFile}`);
+        if (s.agentic)
+            log.warn('Agentic mode needs a local clone of each PR, which watch doesn\'t have; reviewing without tools.');
         try {
             for (;;) {
                 try {

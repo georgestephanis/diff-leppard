@@ -19,7 +19,10 @@ http
           findings.push({ file, line: Number(m[1]), severity: 'minor', category: 'testing', title: 'Mock finding', body: 'Emitted by the CI mock server.' });
         }
       }
-      res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ summary: 'Mock review.', findings }) }, finish_reason: 'stop' }] }));
+      // Echo the change description, so tests can tell it reached the prompt.
+      const described = /Change description:\n(.*)/.exec(prompt);
+      const summary = described ? `Mock review of: ${described[1]}` : 'Mock review.';
+      res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ summary, findings }) }, finish_reason: 'stop' }] }));
     });
   })
   .listen(port, '127.0.0.1', () => console.log(`mock OpenAI server on :${port}`));

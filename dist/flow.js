@@ -122,7 +122,7 @@ async function reviewPullRequest(p) {
         log: p.log,
         signal: p.signal,
     });
-    if (s.agentic && !local)
+    if (s.agentic && !local && !p.noLocalClone)
         p.log.warn('Agentic mode needs a local clone that has the PR head commit (run from a checkout and fetch it); reviewing without tools.');
     const result = await (0, review_1.runReview)(loaded.files, {
         llm,
@@ -145,6 +145,7 @@ async function reviewPullRequest(p) {
         preSkipped: loaded.skipped,
     });
     const pr = loaded.pr;
+    result.headSha = pr.headSha;
     const title = `Review of ${label}: ${pr.title}`;
     const markdown = () => (0, report_1.renderMarkdownReport)(result, {
         title,

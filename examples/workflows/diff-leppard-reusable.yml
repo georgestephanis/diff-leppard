@@ -35,8 +35,9 @@ on:
         type: string
         required: false
       min-severity:
+        description: "Drop findings below this severity. Empty: the repo's .diff-leppard.json, else minor"
         type: string
-        default: minor
+        default: ""
       fail-on:
         description: "Fail the check on findings at or above this severity, e.g. critical. Empty: never."
         type: string

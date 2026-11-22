@@ -69,6 +69,8 @@ export interface ReviewResult {
   rejectedFindings?: Finding[];
   /** What extra context went into the review, for logs and evaluation. */
   contextNotes?: string[];
+  /** PR reviews: the head commit reviewed, so a client can tell whether its checkout matches the line numbers. */
+  headSha?: string;
 }
 
 export interface Logger {

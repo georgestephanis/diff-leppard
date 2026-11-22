@@ -179,6 +179,7 @@ export async function watchOnce(o: WatchRunOptions): Promise<WatchRunSummary> {
         host: o.host,
         settings: o.settings,
         configure: o.configure,
+        noLocalClone: true,
         log: o.log,
         signal: o.signal,
         onProgress: o.onProgress,

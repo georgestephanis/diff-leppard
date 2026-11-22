@@ -42,6 +42,7 @@ exports.parseJsonc = parseJsonc;
 exports.readJsonFile = readJsonFile;
 exports.filterRepoConfig = filterRepoConfig;
 exports.envSettings = envSettings;
+exports.checkRepoConfig = checkRepoConfig;
 exports.readRepoConfig = readRepoConfig;
 exports.loadConfig = loadConfig;
 /**
@@ -393,6 +394,15 @@ function validate(s) {
     }
     if (Object.values(s.extraHeaders).some((v) => typeof v !== 'string'))
         throw new Error('extraHeaders values must be strings');
+}
+/**
+ * A repo config's allowed keys, checked on their own (against the defaults), for callers that apply them
+ * over settings from elsewhere (the VS Code extension). Throws on an invalid value.
+ */
+function checkRepoConfig(json) {
+    const r = filterRepoConfig(json);
+    validate(merge(defaultSettings(), r.allowed));
+    return r;
 }
 /** Read <root>/.diff-leppard.json if present. */
 async function readRepoConfig(root) {

@@ -417,6 +417,16 @@ export interface LoadedConfig {
   warnings: string[];
 }
 
+/**
+ * A repo config's allowed keys, checked on their own (against the defaults), for callers that apply them
+ * over settings from elsewhere (the VS Code extension). Throws on an invalid value.
+ */
+export function checkRepoConfig(json: Json): { allowed: Json; ignored: string[] } {
+  const r = filterRepoConfig(json);
+  validate(merge(defaultSettings() as unknown as Json, r.allowed) as unknown as CliSettings);
+  return r;
+}
+
 /** Read <root>/.diff-leppard.json if present. */
 export async function readRepoConfig(root: string | undefined): Promise<RepoConfigInput | undefined> {
   if (!root) return undefined;

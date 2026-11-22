@@ -87,6 +87,11 @@ test('MCP server: handshake, tools, reviews, input checks, cancellation', async 
     assert.equal(r.structuredContent.model, 'mock-model');
     assert.deepEqual(JSON.parse(r.content[0].text).findings, r.structuredContent.findings);
 
+    // A description reaches the prompt.
+    const described = await c.call('review_local_changes', { title: 'Add y', description: 'Adds the y line.' });
+    assert.match(described.structuredContent.summary, /Mock review of: Adds the y line\./);
+    assert.equal((await c.call('review_local_changes', { description: 5 })).isError, true);
+
     // min_severity filters; staged with nothing staged is "nothing to review".
     assert.equal((await c.call('review_local_changes', { min_severity: 'major' })).structuredContent.findings.length, 0);
     assert.match((await c.call('review_local_changes', { staged: true })).content[0].text, /nothing to review/);

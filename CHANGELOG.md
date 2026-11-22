@@ -12,6 +12,12 @@
 - **Evaluation set:** `npm run eval` runs small cases with known answers and traps and reports recall, false positives and time (#29). See `eval/README.md`.
 - `--no-context` reviews hunks only, as before.
 - **Docs:** a [Platform differences](README.md#platform-differences) section covers what each surface (CLI, MCP, VS Code, Action, watch, Neovim) gets and which settings reach it, including how to set `DIFF_LEPPARD_*` variables in the Action's step `env:` for settings without an input.
+- **Platform fixes** (#42):
+  - **watch** no longer applies the starting directory's `.diff-leppard.json` to other repos' PRs, and warns about `agentic` once instead of on every PR.
+  - **GitHub Action:** inputs left empty no longer override the repo's `.diff-leppard.json` or `DIFF_LEPPARD_*` variables in the step's `env:`. `min-severity`, `provider` and `attribution` now default to empty (same behaviour unless the repo sets `minimumSeverity`). New `verify-findings`, `check-description` and `no-context` inputs. The example workflow has an optional checkout of the PR head, for related code and `agentic`.
+  - **VS Code** applies a repo's `.diff-leppard.json` (the same keys as the CLI; for PRs from the base branch), under workspace settings. New `agentic` and `maxToolCalls` settings. Untrusted workspaces can't change settings that add load on your server.
+  - **MCP:** `review_local_changes` takes `title` and `description`.
+  - **Neovim:** `minimum_severity` is passed to the CLI (default: the CLI's setting), and `:DiffLeppardPR` keeps findings out of buffers when the PR's head isn't checked out. PR results in JSON now include `headSha`.
 - **Reviews are slower by default:** requests are bigger, and each critical or major finding gets one more request. In testing with a 27B model, reviews took about twice as long per range (rough: one 1.3.0 run, on a different set of ranges), and false critical/major findings went from 5 in a 1.3.0 run (3–6 per run on the new defaults before findings outside the change were verified) to 0 in each of 3 runs. `--verify off` and `--no-context` trade that back for speed.
 
 ## 1.3.0 (2026-11-10)

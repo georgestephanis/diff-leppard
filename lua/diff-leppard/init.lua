@@ -14,8 +14,9 @@ local defaults = {
   -- Put findings in the quickfix list (and open it when there are any).
   quickfix = true,
   open_quickfix = true,
-  -- Findings below this severity are left out: "critical", "major", "minor" or "nit".
-  minimum_severity = "nit",
+  -- Findings below this severity are left out: "critical", "major", "minor" or "nit". Passed to the CLI as
+  -- --min-severity; nil uses the CLI's own minimumSeverity setting (default "minor").
+  minimum_severity = nil,
 }
 
 M.config = vim.deepcopy(defaults)
@@ -68,11 +69,19 @@ local function message(f)
   return table.concat(parts, "\n\n")
 end
 
---- Show a ReviewResult. `root` is the repo root the finding paths are relative to.
+--- The commit checked out in `root`, or nil.
+local function head_sha(root)
+  local out = vim.system({ "git", "-C", root, "rev-parse", "--verify", "--quiet", "HEAD" }, { text = true }):wait()
+  return out.code == 0 and vim.trim(out.stdout) or nil
+end
+
+--- Show a ReviewResult. `root` is the repo root the finding paths are relative to. For a PR review whose
+--- head isn't checked out, findings go to the quickfix list only: their line numbers are the PR's.
 function M.show(result, root)
   M.clear()
   local cfg = M.config
   local min = SEVERITY_RANK[cfg.minimum_severity] or 4
+  local elsewhere = result.headSha ~= nil and (not root or head_sha(root) ~= result.headSha)
   local by_buf, items = {}, {}
   for _, f in ipairs(result.findings or {}) do
     local sev = SEVERITY_RANK[f.severity] and f.severity or "minor"
@@ -81,7 +90,7 @@ function M.show(result, root)
       local lnum = math.max((tonumber(f.line) or 1) - 1, 0)
       local end_lnum = math.max((tonumber(f.endLine) or (lnum + 1)) - 1, lnum)
       local text = message(f)
-      if cfg.diagnostics and vim.uv.fs_stat(path) then
+      if cfg.diagnostics and not elsewhere and vim.uv.fs_stat(path) then
         local buf = vim.fn.bufadd(path)
         by_buf[buf] = by_buf[buf] or {}
         table.insert(by_buf[buf], {
@@ -136,6 +145,7 @@ function M.review(args)
   end
   local cmd = vim.list_extend(vim.deepcopy(M.config.cmd), args)
   vim.list_extend(cmd, M.config.args)
+  if M.config.minimum_severity then vim.list_extend(cmd, { "--min-severity", M.config.minimum_severity }) end
   vim.list_extend(cmd, { "-q", "-f", "json" })
   if args[1] == "pr" then table.insert(cmd, "--no-prompt") end
 
@@ -161,6 +171,10 @@ function M.review(args)
       local secs = math.floor((vim.uv.now() - started) / 100) / 10
       local msg = string.format("%s · %s · %ss", count_line(result), result.model or "?", secs)
       local level = vim.log.levels.INFO
+      if result.headSha and head_sha(root) ~= result.headSha then
+        msg = msg .. "\nThe PR's head isn't checked out, so findings are in the quickfix list only (line numbers are the PR's)."
+        level = vim.log.levels.WARN
+      end
       if result.errors and #result.errors > 0 then
         msg = msg .. "\nIncomplete review: " .. table.concat(result.errors, "; ")
         level = vim.log.levels.WARN
