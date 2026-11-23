@@ -7,7 +7,7 @@ npm run build
 npm run eval -- --label my-change                      # every case, your normal config
 npm run eval -- --label hunks-only -- --no-context      # anything after -- goes to diff-leppard
 npm run eval -- --label other --config ./other.json --cases css-cascade-tie,template-traps
-npm run eval -- --label debug --cases template-traps --keep   # don't delete the throwaway repos ($TMPDIR/dl-eval-*)
+npm run eval -- --label debug --cases template-traps --keep   # keep the throwaway repos and print where each one is
 ```
 
 It needs a model server, configured as usual (`~/.config/diff-leppard/config.json`, `DIFF_LEPPARD_*`, or `--config`). Each case takes from a few seconds to a few minutes on a 27B model.

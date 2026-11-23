@@ -18,6 +18,10 @@
   - **VS Code** applies a repo's `.diff-leppard.json` (the same keys as the CLI; for PRs from the base branch), under workspace settings. New `agentic` and `maxToolCalls` settings. Untrusted workspaces can't change settings that add load on your server.
   - **MCP:** `review_local_changes` takes `title` and `description`.
   - **Neovim:** `minimum_severity` is passed to the CLI (default: the CLI's setting), and `:DiffLeppardPR` keeps findings out of buffers when the PR's head isn't checked out. PR results in JSON now include `headSha`.
+- **watch can review from local clones** (`watch.clones`, #44): map `owner/repo` (or `owner/*`) to a clone, and watch fetches each PR's commits into it (objects only) so related code is searched and `agentic` works.
+- **VS Code local reviews know what the change is for** (#45): the message in the Source Control commit box is used as the title and description (`diffLeppard.localDescription`: `commitMessage`, `ask` or `off`), so `checkDescription` works there too.
+- **Verification of findings that name no changed file** (#40): the files and hunks the finding mentions are shown first and get more room, at most 8 files are shown, and the total stays within the request size. A finding on a changed file the review skipped as too large is labelled as changed, not as outside the change.
+- Small cleanups (#46): `eval --keep` prints where it kept each test repo; setting both `DIFF_LEPPARD_MIN_SEVERITY` and `DIFF_LEPPARD_MINIMUM_SEVERITY` (or the two timeout names) warns; an unused `loadPullRequest` parameter is gone.
 - **Reviews are slower by default:** requests are bigger, and each critical or major finding gets one more request. In testing with a 27B model, reviews took about twice as long per range (rough: one 1.3.0 run, on a different set of ranges), and false critical/major findings went from 5 in a 1.3.0 run (3–6 per run on the new defaults before findings outside the change were verified) to 0 in each of 3 runs. `--verify off` and `--no-context` trade that back for speed.
 
 ## 1.3.0 (2026-11-10)

@@ -109,7 +109,7 @@ async function reviewPullRequest(p) {
         }
     }
     // Guidelines come from prepareContext (base branch, with the AGENTS.md fallback), not loadPullRequest.
-    const loaded = await (0, pr_1.loadPullRequest)(p.client, p.repo, p.number, undefined, p.log, pr0);
+    const loaded = await (0, pr_1.loadPullRequest)(p.client, p.repo, p.number, pr0);
     const llm = await makeLlm(s, p.log);
     // A local checkout that has the PR's head commit allows searching the repo; otherwise read through the API.
     const local = await (0, context_1.localViewAt)(p.localRoot, loaded.pr.headSha);

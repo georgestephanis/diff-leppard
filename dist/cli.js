@@ -446,8 +446,10 @@ async function main(argv) {
         };
         if (!once)
             say(`watching every ${Math.round(intervalMs / 1000)}s (Ctrl-C to stop); state: ${stateFile}`);
-        if (s.agentic)
-            log.warn('Agentic mode needs a local clone of each PR, which watch doesn\'t have; reviewing without tools.');
+        if (s.agentic && !Object.keys(s.watch.clones).length)
+            log.warn('Agentic mode needs a local clone of each PR; set watch.clones to use it. Reviewing without tools.');
+        else if (s.agentic)
+            log.warn('Agentic mode is used only for repos in watch.clones; others are reviewed without tools.');
         try {
             for (;;) {
                 try {

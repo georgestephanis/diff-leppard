@@ -83,6 +83,11 @@ test('settings are validated; every key is available from the environment', asyn
   assert.equal(settings.github.attribution, false);
   assert.equal(settings.minimumSeverity, 'major');
   assert.equal(settings.requestTimeoutSeconds, 30);
+  const both = await loadConfig(undefined, {}, { ...env, DIFF_LEPPARD_MIN_SEVERITY: 'nit', DIFF_LEPPARD_MINIMUM_SEVERITY: 'major' });
+  assert.equal(both.settings.minimumSeverity, 'major');
+  assert.match(both.warnings.join('\n'), /Both DIFF_LEPPARD_MIN_SEVERITY and DIFF_LEPPARD_MINIMUM_SEVERITY are set; using DIFF_LEPPARD_MINIMUM_SEVERITY/);
+  const same = await loadConfig(undefined, {}, { ...env, DIFF_LEPPARD_TIMEOUT_SECONDS: '30', DIFF_LEPPARD_REQUEST_TIMEOUT_SECONDS: '30' });
+  assert.deepEqual(same.warnings, []);
 });
 
 test('parseJsonc leaves string contents alone', () => {

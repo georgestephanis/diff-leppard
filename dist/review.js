@@ -112,6 +112,7 @@ async function runReview(files, opts) {
             signal: opts.signal,
             view: opts.view,
             exclude: opts.exclude,
+            changedNotShown: opts.preSkipped?.map((x) => x.path),
         });
         if (opts.signal?.aborted)
             throw new CancelledError();

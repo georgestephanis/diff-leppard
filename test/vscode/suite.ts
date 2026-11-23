@@ -72,6 +72,33 @@ export async function run(): Promise<void> {
     assert.equal(vscode.languages.getDiagnostics(vscode.Uri.file(path.join(root, 'new.js'))).length, 1, "the repo config's minimumSeverity keeps the nit");
     fs.rmSync(path.join(root, '.diff-leppard.json'));
     await vscode.commands.executeCommand('diffLeppard.clearFindings');
+
+    // The Source Control commit box's message tells a local review what the change is for.
+    const gitApi = (await vscode.extensions.getExtension<any>('vscode.git')!.activate()).getAPI(1);
+    let scmRepo: any;
+    for (let i = 0; i < 100 && !(scmRepo = gitApi.repositories.find((r: any) => path.resolve(r.rootUri.fsPath) === path.resolve(fs.realpathSync(root)) || path.resolve(r.rootUri.fsPath) === path.resolve(root))); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.ok(scmRepo, 'git extension found the test repo');
+    scmRepo.inputBox.value = 'Add a user lookup helper\n\nUsed by the admin page.';
+    prompts.length = 0;
+    await Promise.race([
+      vscode.commands.executeCommand('diffLeppard.reviewUncommitted'),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('review timed out')), 60000)),
+    ]);
+    assert.match(prompts[0], /Change title: Add a user lookup helper/);
+    assert.match(prompts[0], /Change description:\nUsed by the admin page\./);
+    scmRepo.inputBox.value = '';
+    await cfg.update('localDescription', 'off', vscode.ConfigurationTarget.Global);
+    prompts.length = 0;
+    scmRepo.inputBox.value = 'Should not be sent';
+    await Promise.race([
+      vscode.commands.executeCommand('diffLeppard.reviewUncommitted'),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('review timed out')), 60000)),
+    ]);
+    assert.doesNotMatch(prompts[0], /Should not be sent/, 'localDescription: off ignores the commit box');
+    scmRepo.inputBox.value = '';
+    await vscode.commands.executeCommand('diffLeppard.clearFindings');
     console.log('VS Code integration test passed');
   } finally {
     server.close();

@@ -57,11 +57,74 @@ export function codeForFinding(f: Finding, file: FileDiff | undefined, maxChars:
   return text.length <= maxChars ? text : text.slice(0, maxChars) + '\n…[cut]';
 }
 
-/** The whole change, for a finding that names no file in it: each changed file gets an equal share of the room. */
-export function codeForChange(files: FileDiff[], maxChars: number): string {
-  if (!files.length) return '';
-  const each = Math.floor(maxChars / files.length);
-  return files.map((file) => codeForFinding({ file: file.path, severity: 'minor', title: '', body: '', inline: false }, file, each)).filter(Boolean).join('\n\n');
+/** Code-like words in a finding: `quoted` spans, camelCase, snake_case and dotted names. */
+export function findingTerms(f: Pick<Finding, 'title' | 'body'>): string[] {
+  const text = `${f.title}\n${f.body}`;
+  const out = new Set<string>();
+  for (const m of text.matchAll(/`([^`\n]{2,80})`/g)) out.add(m[1].trim().toLowerCase());
+  for (const m of text.matchAll(/[A-Za-z_$][\w$]*(?:[._][\w$]+)+|[a-z]+[A-Z][\w$]*|[A-Z][a-z]+[A-Z][\w$]*/g)) out.add(m[0].toLowerCase());
+  return [...out].filter((t) => t.length >= 3);
+}
+
+const hunkText = (h: FileDiff['hunks'][number]) => h.lines.map((l) => l.text).join('\n').toLowerCase();
+
+/** Most files shown for a finding that names no file; the rest are listed by path only. */
+const MAX_CHANGE_FILES = 8;
+
+/**
+ * The whole change, for a finding that names no file in it. Files the finding mentions (by path, name or a term
+ * found in their hunks) come first and get more room; at most MAX_CHANGE_FILES are shown, and the total stays
+ * within maxChars. A file that doesn't fit in its share keeps the hunks that mention the finding's terms first.
+ */
+export function codeForChange(files: FileDiff[], maxChars: number, f?: Pick<Finding, 'title' | 'body'>): string {
+  if (!files.length || maxChars <= 0) return '';
+  const text = f ? `${f.title}\n${f.body}`.toLowerCase() : '';
+  const terms = f ? findingTerms(f) : [];
+  const scored = files.map((file, i) => {
+    const base = file.path.split('/').pop()!.toLowerCase();
+    let score = text.includes(file.path.toLowerCase()) ? 4 : base.length >= 3 && text.includes(base) ? 3 : 0;
+    const hunks = file.hunks.map((h) => {
+      const t = hunkText(h);
+      return terms.filter((w) => t.includes(w)).length;
+    });
+    if (hunks.some((n) => n > 0)) score += 1 + Math.min(2, Math.max(...hunks));
+    return { file, i, score, hunks };
+  });
+  scored.sort((a, b) => b.score - a.score || a.i - b.i);
+  const shown = scored.slice(0, MAX_CHANGE_FILES);
+  const rest = scored.slice(MAX_CHANGE_FILES);
+  const tail = rest.length ? `\n\n(${rest.length} more changed file(s) not shown: ${rest.map((x) => x.file.path).join(', ')})` : '';
+  let room = maxChars - tail.length;
+  if (room <= 0) return '';
+  const weight = (x: (typeof shown)[number]) => (x.score > 0 ? 2 : 1);
+  let weights = shown.reduce((n, x) => n + weight(x), 0);
+  const parts: string[] = [];
+  const CUT = '\n…[cut]'.length;
+  for (const x of shown) {
+    const sep = parts.length ? 2 : 0;
+    const share = Math.floor(((room - sep) * weight(x)) / weights) - CUT;
+    weights -= weight(x);
+    if (share <= 40) continue;
+    const blank = { file: x.file.path, severity: 'minor' as Severity, title: '', body: '', inline: false };
+    let code = codeForFinding(blank, x.file, share);
+    if (code.length > share && x.hunks.some((n) => n > 0)) {
+      // Too big for its share: show the hunks the finding talks about rather than whatever comes first.
+      const order = x.file.hunks.map((h, j) => ({ h, n: x.hunks[j], j })).sort((a, b) => b.n - a.n || a.j - b.j);
+      for (let k = order.length; k > 0; k--) {
+        const pick = order.slice(0, k).sort((a, b) => a.j - b.j).map((o) => o.h);
+        const narrowed = codeForFinding(blank, { ...x.file, hunks: pick }, share);
+        if (narrowed.length <= share || k === 1) {
+          code = narrowed;
+          break;
+        }
+      }
+    }
+    if (!code) continue;
+    code = code.slice(0, room - sep);
+    parts.push(code);
+    room -= code.length + sep;
+  }
+  return parts.join('\n\n') + tail;
 }
 
 /**
@@ -69,7 +132,7 @@ export function codeForChange(files: FileDiff[], maxChars: number): string {
  * around the line, read from the reviewed commit, followed by the change itself, since the finding is only
  * real if the change causes or exposes it. Empty when the path isn't safe or the file can't be read.
  */
-export async function codeForUnchangedFile(f: Finding, files: FileDiff[], view: RepoView, maxChars: number): Promise<string> {
+export async function codeForUnchangedFile(f: Finding, files: FileDiff[], view: RepoView, maxChars: number, changed = false): Promise<string> {
   const p = safeRepoPath(f.file);
   if (!p) return '';
   const content = await view.read(p, 2_000_000).catch(() => undefined);
@@ -87,8 +150,11 @@ export async function codeForUnchangedFile(f: Finding, files: FileDiff[], view: 
     }
   }
   if (!shown) shown = content.slice(0, own) + '\n…[cut]';
-  const header = `=== File: ${p} (not shown as part of the change; the finding is about this file) ===\n${shown}\n\nThe change under review:\n\n`;
-  return header + codeForChange(files, maxChars - header.length);
+  const note = changed
+    ? 'changed by this change, but too large to show its diff; shown as it is after the change, so lines here may be new'
+    : 'not shown as part of the change; the finding is about this file';
+  const header = `=== File: ${p} (${note}) ===\n${shown}\n\nThe change under review:\n\n`;
+  return header + codeForChange(files, maxChars - header.length, f);
 }
 
 /** What review.ts names a finding whose file the model didn't give. */
@@ -131,6 +197,8 @@ export interface VerifyOptions {
   view?: RepoView;
   /** Paths excluded from review; findings on them aren't read from the repo. */
   exclude?: (path: string) => boolean;
+  /** Changed files left out of the review before it started (e.g. too large); findings on them are labelled as changed. */
+  changedNotShown?: string[];
 }
 
 /** Verify findings; returns the kept ones (with `verified`/`evidence`) and the rejected ones. */
@@ -150,8 +218,8 @@ export async function verifyFindings(findings: Finding[], files: FileDiff[], opt
       // Not a changed file: read it from the repo, or, if it names no readable file, check it against the whole change.
       // Normalise the path before the exclude check, so "x.pem/" or "a/./b" can't slip past a glob.
       const repoPath = !file && f.file !== UNKNOWN_FILE ? safeRepoPath(f.file) : undefined;
-      if (!code && repoPath && opts.view && !opts.exclude?.(repoPath)) code = await codeForUnchangedFile({ ...f, file: repoPath }, files, opts.view, opts.maxChars);
-      if (!code && !file) code = codeForChange(files, opts.maxChars);
+      if (!code && repoPath && opts.view && !opts.exclude?.(repoPath)) code = await codeForUnchangedFile({ ...f, file: repoPath }, files, opts.view, opts.maxChars, !!opts.changedNotShown?.some((x) => safeRepoPath(x) === repoPath));
+      if (!code && !file) code = codeForChange(files, opts.maxChars, f);
       if (!code) {
         // Nothing to check it against: don't let it through at full strength.
         out[i] = { ...f, severity: lowerWithin(f.severity, opts.minimumSeverity) };

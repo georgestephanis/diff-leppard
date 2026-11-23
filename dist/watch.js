@@ -39,6 +39,8 @@ exports.writeState = writeState;
 exports.acquireLock = acquireLock;
 exports.watchQueries = watchQueries;
 exports.repoMatches = repoMatches;
+exports.clonePathFor = clonePathFor;
+exports.prepareClone = prepareClone;
 exports.watchOnce = watchOnce;
 exports.parseInterval = parseInterval;
 /**
@@ -51,6 +53,7 @@ const fs_1 = require("fs");
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
 const flow_1 = require("./flow");
+const git_1 = require("./git");
 const github_1 = require("./github");
 const MAX_ATTEMPTS = 3;
 const STATE_RETENTION_DAYS = 90;
@@ -132,6 +135,64 @@ function repoMatches(repo, patterns) {
         return q.endsWith('/*') ? name.startsWith(q.slice(0, -1)) : name === q;
     });
 }
+/** The configured clone for a repo ("owner/repo" first, then "owner/*" + repo name), with ~ expanded. */
+function clonePathFor(clones, repo) {
+    const find = (k) => Object.entries(clones).find(([key]) => key.toLowerCase() === k.toLowerCase())?.[1];
+    const exact = find(`${repo.owner}/${repo.repo}`);
+    const dir = exact ? undefined : find(`${repo.owner}/*`);
+    const p = exact ?? (dir ? path.join(dir, repo.repo) : undefined);
+    return p ? path.resolve(p.replace(/^~(?=$|\/)/, os.homedir())) : undefined;
+}
+const hasCommit = async (root, sha) => (await (0, git_1.git)(root, ['rev-parse', '--verify', '--quiet', `${sha}^{commit}`], true)).trim() !== '';
+/**
+ * Make sure a local clone has a PR's head and base commits, fetching them from the clone's remote for the repo.
+ * Only objects are fetched: no branch, tag or FETCH_HEAD changes, and nothing from the PR is run.
+ * Returns the clone's path, or undefined (with a warning) when it can't be used.
+ */
+async function prepareClone(clone, repo, number, pr, host, log) {
+    const name = `${repo.owner}/${repo.repo}`;
+    if (!(await (0, git_1.git)(clone, ['rev-parse', '--git-dir'], true)).trim()) {
+        log.warn(`watch.clones: ${clone} isn't a git repository; reviewing ${name}#${number} without it.`);
+        return undefined;
+    }
+    const want = [pr.headSha, pr.baseSha].filter((x) => !!x && /^[0-9a-f]{7,64}$/i.test(x));
+    const missing = [];
+    for (const sha of want)
+        if (!(await hasCommit(clone, sha)))
+            missing.push(sha);
+    if (missing.length) {
+        // The configured URLs, not `git remote -v`'s, which shows them after any url.<x>.insteadOf rewriting.
+        const urls = (await (0, git_1.git)(clone, ['config', '--get-regexp', '^remote\\..*\\.url$'], true))
+            .split('\n')
+            .map((l) => /^remote\.(.+)\.url\s+(.+)$/.exec(l.trim()))
+            .filter((m) => !!m)
+            .map((m) => ({ name: m[1], url: m[2] }));
+        const remote = urls.find((r) => {
+            const ref = (0, github_1.parseRemoteUrl)(r.url, host);
+            return ref && ref.owner.toLowerCase() === repo.owner.toLowerCase() && ref.repo.toLowerCase() === repo.repo.toLowerCase();
+        });
+        if (!remote) {
+            log.warn(`watch.clones: ${clone} has no remote for ${host}/${name}; reviewing #${number} without it.`);
+            return undefined;
+        }
+        const fetch = (refs) => (0, git_1.git)(clone, ['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', remote.name, ...refs]);
+        try {
+            await fetch([`refs/pull/${number}/head`]);
+            // The base commit is usually an ancestor already; if not, fetch it by id (GitHub allows that).
+            if (pr.baseSha && !(await hasCommit(clone, pr.baseSha)))
+                await fetch([pr.baseSha]).catch(() => undefined);
+        }
+        catch (e) {
+            log.warn(`watch.clones: fetching ${name}#${number} into ${clone} failed (${e.message}); reviewing without it.`);
+            return undefined;
+        }
+        if (!(await hasCommit(clone, pr.headSha))) {
+            log.warn(`watch.clones: ${clone} still lacks ${pr.headSha.slice(0, 7)} after fetching; reviewing ${name}#${number} without it.`);
+            return undefined;
+        }
+    }
+    return clone;
+}
 /** One pass: search, decide, review and post. */
 async function watchOnce(o) {
     const w = o.settings.watch;
@@ -181,6 +242,8 @@ async function watchOnce(o) {
         }
         o.say(`reviewing ${key} @ ${short} — ${pr.title}`);
         try {
+            const clone = clonePathFor(w.clones, hit.repo);
+            const localRoot = clone ? await prepareClone(clone, hit.repo, hit.number, pr, o.host, o.log) : undefined;
             const review = await (0, flow_1.reviewPullRequest)({
                 client: o.client,
                 repo: hit.repo,
@@ -188,6 +251,8 @@ async function watchOnce(o) {
                 host: o.host,
                 settings: o.settings,
                 configure: o.configure,
+                localRoot,
+                // A repo without a configured clone was warned about at startup; one whose clone failed was just warned about.
                 noLocalClone: true,
                 log: o.log,
                 signal: o.signal,
