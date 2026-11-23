@@ -1,8 +1,12 @@
 # Diff Leppard 🐆
 
 > [!TIP]
-> **Look before you build.** [wvw.dev](https://wvw.dev) is a catalog of open-source apps, many of them built with AI.
-> When this was written, nothing there did code review. The closest is [git-rewrite-commits](https://wvw.dev/#/discover/git-rewrite-commits) (rewrites commit messages with Ollama or GPT). Before spending tokens on a new app, search wvw.dev for something you can fork (or fork this one).
+> **Look before you build.** Similar open-source projects:
+>
+> - [PR-Agent](https://github.com/The-PR-Agent/pr-agent): open-source AI pull request reviewer, MIT
+> - [AI Code Reviewer](https://github.com/villesau/ai-codereviewer): GitHub Action for AI PR review, MIT, last updated 2024
+>
+> Before building your own tool, search [AlternativeTo](https://alternativeto.net) (filter to open source), [GitHub](https://github.com/search?type=repositories) and [wvw.dev](https://wvw.dev) for something to fork, this repo included.
 
 > *Pour some suggestions on me.*
 
