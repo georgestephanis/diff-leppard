@@ -97,7 +97,8 @@ function main() {
     const t0 = Date.now();
     const p = spawnSync(process.execPath, [...args, ...o.extra], { env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
     const seconds = (Date.now() - t0) / 1000;
-    if (!o.keep) fs.rmSync(dir, { recursive: true, force: true });
+    if (o.keep) console.error(`${name}: kept ${dir}`);
+    else fs.rmSync(dir, { recursive: true, force: true });
     let res;
     try {
       res = JSON.parse(p.stdout);

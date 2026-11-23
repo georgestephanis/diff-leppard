@@ -83,6 +83,7 @@ function readSettings() {
         fullFileMaxChars: c.get('fullFileMaxChars', d.fullFileMaxChars),
         relatedMaxChars: c.get('relatedMaxChars', d.relatedMaxChars),
         checkDescription: c.get('checkDescription', d.checkDescription),
+        localDescription: c.get('localDescription', 'commitMessage'),
         verifyFindings: c.get('verifyFindings', d.verifyFindings),
         agentic: c.get('agentic', d.agentic),
         maxToolCalls: c.get('maxToolCalls', d.maxToolCalls),
@@ -411,6 +412,47 @@ class Controller {
             this.updateStatus();
         }
     }
+    /** The message in the Source Control commit box for this repo, if the Git extension is available. */
+    commitBoxText(root) {
+        try {
+            const git = vscode.extensions.getExtension('vscode.git')?.exports?.getAPI?.(1);
+            const same = (a, b) => (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
+            const repo = git?.getRepository?.(vscode.Uri.file(root)) ?? git?.repositories?.find((r) => same(r.rootUri.fsPath, root));
+            return typeof repo?.inputBox?.value === 'string' ? repo.inputBox.value.trim() : '';
+        }
+        catch {
+            return '';
+        }
+    }
+    /**
+     * What a local change is for, as a title and description: the commit box's message, or (with "ask") what the
+     * user types, remembered for the workspace until HEAD moves. null = the user cancelled the review.
+     */
+    async localPurpose(root, mode) {
+        if (mode === 'off')
+            return {};
+        let text = this.commitBoxText(root);
+        if (mode === 'ask') {
+            const head = await (0, git_1.getHeadSha)(root).catch(() => '');
+            const key = `diffLeppard.localDescription:${root}`;
+            const saved = this.ctx.workspaceState.get(key);
+            const answer = await vscode.window.showInputBox({
+                title: 'Diff Leppard: what is this change for?',
+                prompt: 'Optional. Helps the review judge intent (and is checked against the code when checkDescription is on). Enter to skip, Escape to cancel.',
+                value: text || (saved && saved.head === head ? saved.text : ''),
+                ignoreFocusOut: true,
+            });
+            if (answer === undefined)
+                return null;
+            text = answer.trim();
+            await this.ctx.workspaceState.update(key, text ? { head, text } : undefined);
+        }
+        if (!text)
+            return {};
+        const [title, ...rest] = text.split('\n');
+        this.logger.info(`Change described as: ${title.trim()}`);
+        return { title: title.trim(), description: rest.join('\n').trim() || undefined };
+    }
     async reviewLocal(stagedOnly) {
         const root = await this.pickRepoRoot(true);
         if (!root)
@@ -438,6 +480,10 @@ class Controller {
                 vscode.window.showInformationMessage(`No ${what} to review in ${path.basename(root)}.`);
                 return undefined;
             }
+            // Asked only once there's something to review; Escape cancels the review.
+            const purpose = await this.localPurpose(root, s.localDescription);
+            if (purpose === null || signal.aborted)
+                return undefined;
             const view = (0, context_1.gitRepoView)(root, stagedOnly ? context_1.INDEX : undefined);
             const ctx = await (0, flow_1.prepareContext)({ files: diff.files, settings: { ...s, excludeGlobs: s.excludeGlobs }, llm, view, guideView: view, log: this.logger, signal });
             const head = s.agentic ? await (0, git_1.getHeadSha)(root).catch(() => undefined) : undefined;
@@ -449,7 +495,7 @@ class Controller {
                 exclude,
                 verify: s.verifyFindings,
                 agent: s.agentic ? { view, before: head ? (0, context_1.gitRepoView)(root, head) : undefined, maxToolCalls: s.maxToolCalls, exclude } : undefined,
-                context: { extraInstructions: s.extraInstructions, repoInstructions: ctx.repoInstructions },
+                context: { title: purpose.title, description: purpose.description, checkDescription: s.checkDescription && !!purpose.title, extraInstructions: s.extraInstructions, repoInstructions: ctx.repoInstructions },
                 log: this.logger,
                 signal,
                 onProgress: report,
@@ -485,7 +531,7 @@ class Controller {
         this.log.info(`=== Reviewing ${label}`);
         const out = await this.withReviewProgress(`Diff Leppard: ${label}`, async (signal, report) => {
             report('Fetching pull request…');
-            const { pr, files, skipped } = await (0, pr_1.loadPullRequest)(gh, ref.repo, ref.number, undefined, this.logger);
+            const { pr, files, skipped } = await (0, pr_1.loadPullRequest)(gh, ref.repo, ref.number);
             // Like the CLI: the repo's .diff-leppard.json comes from the PR's base branch, never from the PR itself.
             const s = applyRepoConfig(s0, await this.repoConfigAt(gh, ref.repo, pr.baseSha), this.logger);
             // Rebuild the client so the repo's model and temperature apply; keep the model picked above if the repo sets none.

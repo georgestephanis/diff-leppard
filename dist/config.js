@@ -122,6 +122,7 @@ function defaultSettings() {
             skipDrafts: true,
             maxPerRun: 5,
             stateFile: '',
+            clones: {},
         },
     };
 }
@@ -376,6 +377,9 @@ function validate(s) {
     }
     if (typeof w.query !== 'string' || typeof w.stateFile !== 'string')
         throw new Error('watch.query and watch.stateFile must be strings');
+    if (!w.clones || typeof w.clones !== 'object' || Array.isArray(w.clones) || Object.entries(w.clones).some(([k, v]) => !/^[\w.-]+\/([\w.-]+|\*)$/.test(k) || typeof v !== 'string' || !(path.isAbsolute(v) || /^~([/\\]|$)/.test(v)))) {
+        throw new Error('watch.clones must map "owner/repo" or "owner/*" to an absolute (or ~/…) path');
+    }
     for (const [k, v] of [['baseUrl', s.baseUrl], ['github.apiUrl', s.github.apiUrl]]) {
         try {
             const u = new URL(v);
@@ -430,6 +434,12 @@ async function loadConfig(repo, flags, env = process.env) {
         }
         settings = merge(settings, allowed);
         sources.push(repo.source);
+    }
+    for (const [alias, key] of Object.entries(ENV_ALIASES)) {
+        const canonical = `DIFF_LEPPARD_${upperSnake(key)}`;
+        if (env[`DIFF_LEPPARD_${alias}`] && env[canonical] && env[`DIFF_LEPPARD_${alias}`] !== env[canonical]) {
+            warnings.push(`Both DIFF_LEPPARD_${alias} and ${canonical} are set; using ${canonical} (${env[canonical]}).`);
+        }
     }
     settings = merge(settings, envSettings(env));
     settings = merge(settings, flags);

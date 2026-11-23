@@ -90,6 +90,12 @@ export interface WatchSettings {
   maxPerRun: number;
   /** Where reviewed PRs are recorded; empty = $XDG_STATE_HOME/diff-leppard/watch.json. */
   stateFile: string;
+  /**
+   * Local clones to review from, so watch can search the repo for related code and use agentic mode:
+   * "owner/repo" → a clone's path, or "owner/*" → a directory holding clones named after each repo.
+   * Each PR's commits are fetched into the clone (objects only; no branches, tags or FETCH_HEAD change).
+   */
+  clones: Record<string, string>;
 }
 
 export const DEFAULT_EXCLUDES = [
@@ -154,6 +160,7 @@ export function defaultSettings(): CliSettings {
       skipDrafts: true,
       maxPerRun: 5,
       stateFile: '',
+      clones: {},
     },
   };
 }
@@ -390,6 +397,9 @@ function validate(s: CliSettings): void {
     if (!Array.isArray(v) || v.some((r) => typeof r !== 'string' || !/^[\w.-]+\/([\w.-]+|\*)$/.test(r))) throw new Error(`${k} must be a list of "owner/repo" or "owner/*"`);
   }
   if (typeof w.query !== 'string' || typeof w.stateFile !== 'string') throw new Error('watch.query and watch.stateFile must be strings');
+  if (!w.clones || typeof w.clones !== 'object' || Array.isArray(w.clones) || Object.entries(w.clones).some(([k, v]) => !/^[\w.-]+\/([\w.-]+|\*)$/.test(k) || typeof v !== 'string' || !(path.isAbsolute(v) || /^~([/\\]|$)/.test(v)))) {
+    throw new Error('watch.clones must map "owner/repo" or "owner/*" to an absolute (or ~/…) path');
+  }
   for (const [k, v] of [['baseUrl', s.baseUrl], ['github.apiUrl', s.github.apiUrl]] as const) {
     try {
       const u = new URL(v);
@@ -455,6 +465,12 @@ export async function loadConfig(repo: RepoConfigInput | undefined, flags: Json,
     }
     settings = merge(settings, allowed);
     sources.push(repo.source);
+  }
+  for (const [alias, key] of Object.entries(ENV_ALIASES)) {
+    const canonical = `DIFF_LEPPARD_${upperSnake(key)}`;
+    if (env[`DIFF_LEPPARD_${alias}`] && env[canonical] && env[`DIFF_LEPPARD_${alias}`] !== env[canonical]) {
+      warnings.push(`Both DIFF_LEPPARD_${alias} and ${canonical} are set; using ${canonical} (${env[canonical]}).`);
+    }
   }
   settings = merge(settings, envSettings(env));
   settings = merge(settings, flags);

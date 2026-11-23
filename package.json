@@ -362,6 +362,18 @@
             "order": 23,
             "description": "Check the PR description's claims (what it changes, what it guards against) against the diff and report ones the code doesn't support. Off by default: in testing it raised more false alarms than real ones."
           },
+          "diffLeppard.localDescription": {
+            "type": "string",
+            "enum": ["commitMessage", "ask", "off"],
+            "enumDescriptions": [
+              "Use the message typed in the Source Control commit box, if any.",
+              "Ask before each local review, prefilled with the commit box message or your last answer (until the next commit).",
+              "Review local changes without a description."
+            ],
+            "default": "commitMessage",
+            "order": 23,
+            "description": "What local reviews (uncommitted or staged changes) are told the change is for. The first line is the title, the rest the description; with checkDescription on, its claims are checked against the code."
+          },
           "diffLeppard.agentic": {
             "type": "boolean",
             "default": false,

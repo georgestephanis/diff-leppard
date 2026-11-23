@@ -6,8 +6,9 @@ import { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { after, before, test } from 'node:test';
-import { parseInterval, repoMatches, watchQueries } from '../src/watch';
-import { defaultSettings } from '../src/config';
+import { clonePathFor, parseInterval, prepareClone, repoMatches, watchQueries } from '../src/watch';
+import { nullLogger } from '../src/types';
+import { defaultSettings, loadConfig } from '../src/config';
 
 // ---------------------------------------------------------------------------
 // Mock GitHub API + mock model server
@@ -259,4 +260,65 @@ test('pr command reviews and posts through the shared flow', async () => {
   assert.equal(posted.length, 1);
   assert.equal(posted[0].body.event, 'COMMENT');
   assert.equal(posted[0].body.commit_id, 'eee5555');
+});
+
+test('watch.clones: path lookup, and fetching a PR into a clone without touching its refs', async () => {
+  const home = require('node:os').homedir();
+  assert.equal(clonePathFor({ 'Acme/App': '~/src/app' }, { owner: 'acme', repo: 'app' }), path.join(home, 'src/app'));
+  assert.equal(clonePathFor({ 'acme/*': '/code' }, { owner: 'acme', repo: 'web' }), path.resolve('/code/web'));
+  assert.equal(clonePathFor({ 'acme/*': '/code', 'acme/web': '/elsewhere' }, { owner: 'acme', repo: 'web' }), path.resolve('/elsewhere'));
+  assert.equal(clonePathFor({ 'other/app': '/x' }, { owner: 'acme', repo: 'app' }), undefined);
+
+  const dir = mkdtempSync(path.join(tmpdir(), 'dl-clone-'));
+  const run = (cwd: string, ...a: string[]) => execFileSync('git', a, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } }).trim();
+  // "GitHub": a bare repo at <dir>/gh/acme/app.git with main and a PR head under refs/pull/7/head.
+  const work = path.join(dir, 'work');
+  run(dir, 'init', '-q', '-b', 'main', work);
+  writeFileSync(path.join(work, 'a.txt'), 'one\n');
+  run(work, 'add', '-A');
+  run(work, 'commit', '-q', '-m', 'base');
+  const base = run(work, 'rev-parse', 'HEAD');
+  run(dir, 'clone', '-q', '--bare', work, path.join(dir, 'gh/acme/app.git'));
+  // The user's clone, made before the PR existed; its remote names github.com and is redirected locally.
+  const clone = path.join(dir, 'clone');
+  run(dir, 'clone', '-q', path.join(dir, 'gh/acme/app.git'), clone);
+  run(clone, 'remote', 'set-url', 'origin', 'https://github.com/acme/app.git');
+  run(clone, 'config', `url.${path.join(dir, 'gh')}/.insteadOf`, 'https://github.com/');
+  // A common setup for reviewing PRs locally; watch's fetch must not create refs/remotes/origin/pr/7 from it.
+  run(clone, 'config', '--add', 'remote.origin.fetch', '+refs/pull/*/head:refs/remotes/origin/pr/*');
+  writeFileSync(path.join(work, 'a.txt'), 'two\n');
+  run(work, 'commit', '-q', '-am', 'pr');
+  const head = run(work, 'rev-parse', 'HEAD');
+  run(work, 'push', '-q', path.join(dir, 'gh/acme/app.git'), 'HEAD:refs/pull/7/head');
+  assert.throws(() => run(clone, 'cat-file', '-t', head), 'the clone starts without the PR commit');
+  const refsBefore = run(clone, 'for-each-ref');
+
+  const warnings: string[] = [];
+  const log = { ...nullLogger, warn: (m: string) => warnings.push(m) };
+  assert.equal(await prepareClone(clone, { owner: 'acme', repo: 'app' }, 7, { headSha: head, baseSha: base }, 'github.com', log), clone);
+  assert.equal(run(clone, 'cat-file', '-t', head), 'commit');
+  assert.equal(run(clone, 'for-each-ref'), refsBefore, 'no refs added or moved');
+  assert.ok(!existsSync(path.join(clone, '.git/FETCH_HEAD')), 'FETCH_HEAD untouched');
+  assert.deepEqual(warnings, []);
+
+  assert.equal(await prepareClone(clone, { owner: 'acme', repo: 'other' }, 7, { headSha: '1'.repeat(40) }, 'github.com', log), undefined);
+  assert.match(warnings.pop()!, /has no remote for github\.com\/acme\/other/);
+  assert.equal(await prepareClone(path.join(dir, 'nope'), { owner: 'acme', repo: 'app' }, 7, { headSha: head }, 'github.com', log), undefined);
+  assert.match(warnings.pop()!, /doesn't exist/);
+  // A plain folder inside some other repo isn't taken for a clone.
+  const inner = path.join(clone, 'sub');
+  require('node:fs').mkdirSync(inner);
+  assert.equal(await prepareClone(inner, { owner: 'acme', repo: 'app' }, 7, { headSha: head }, 'github.com', log), undefined);
+  assert.match(warnings.pop()!, /isn't the top of a git clone/);
+  // A bare clone works.
+  run(dir, 'clone', '-q', '--bare', path.join(dir, 'gh/acme/app.git'), path.join(dir, 'bare.git'));
+  assert.equal(await prepareClone(path.join(dir, 'bare.git'), { owner: 'acme', repo: 'app' }, 7, { headSha: head }, 'github.com', log), path.join(dir, 'bare.git'));
+  assert.deepEqual(warnings, []);
+  // A linked worktree of the clone works too.
+  run(clone, 'worktree', 'add', '-q', '--detach', path.join(dir, 'wt'));
+  assert.equal(await prepareClone(path.join(dir, 'wt'), { owner: 'acme', repo: 'app' }, 7, { headSha: head }, 'github.com', log), path.join(dir, 'wt'));
+  assert.deepEqual(warnings, []);
+  assert.equal(clonePathFor({ 'acme/*': '/code' }, { owner: 'acme', repo: '..' }), undefined);
+  assert.equal(clonePathFor({ 'acme/*': '/code' }, { owner: 'acme', repo: 'a/b' }), undefined);
+  await assert.rejects(loadConfig(undefined, { watch: { clones: { 'acme/app': 'relative/path' } } }, { DIFF_LEPPARD_CONFIG: '/nonexistent' }), /absolute/);
 });

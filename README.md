@@ -88,7 +88,7 @@ A diff alone hides many real problems: a new CSS rule that ties with one 150 lin
 
 1. **Review guidelines**: `instructionsFile`, or else the first of `instructionsFallback` that exists (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `CONTRIBUTING.md`). Long guides are trimmed to their headings plus the sections about reviews, tests, deploys and data. Up to `maxInstructionsChars`, and at most 15% of the request.
 2. **Surrounding code**: each changed file is shown whole when it fits in `fullFileMaxChars` (and 80% of the room left for the diff). Bigger files get their hunks widened by as many lines as fit. Unchanged lines are marked as context; comments still land on changed lines.
-3. **Related code**: names the change uses (functions, CSS classes, flags, constants) are searched for in the rest of the repo, and folders it names are listed with their README and the last commit that touched them. Other files come first, then docs and tests. Up to `relatedMaxChars`, at most 20% of the request. This needs the reviewed commit locally: local reviews always have it, and `pr` does when run from a clone that has fetched the PR head. `watch`, and the GitHub Action unless the workflow fetches the PR head, read PRs through the API, so they skip it (see [Platform differences](#platform-differences)).
+3. **Related code**: names the change uses (functions, CSS classes, flags, constants) are searched for in the rest of the repo, and folders it names are listed with their README and the last commit that touched them. Other files come first, then docs and tests. Up to `relatedMaxChars`, at most 20% of the request. This needs the reviewed commit locally: local reviews always have it, and `pr` does when run from a clone that has fetched the PR head. `watch` without a configured clone (`watch.clones`), and the GitHub Action unless the workflow fetches the PR head, read PRs through the API, so they skip it (see [Platform differences](#platform-differences)).
 4. **Description check** (off by default): the PR description (for `local --range` and `--base`, the commit messages; `--title` and `--description` set them explicitly) is checked against the diff, and claims the code doesn't support are reported (`checkDescription`). This only happens when the whole change fits in one request, since a part of a split review can't see the code that might back a claim.
 
 With a small context window these shrink so the diff keeps most of the room; with a large one they fill up to their caps. `maxChunkChars`, automatic or set by you, is the size of one whole request, so guidelines and related code come out of it too. `--no-context` turns off whole files, related code and the `AGENTS.md` fallback; a configured `instructionsFile` is still used, as before, and verification may still read a file that a finding names.
@@ -97,7 +97,7 @@ After the review, critical and major findings get a **second look** (`verifyFind
 
 All of this makes reviews slower than plain hunks: bigger requests, plus one more request per serious finding. In testing with a 27B model, reviews took about twice as long per range (a rough comparison: one 1.3.0 run, on a different set of ranges), and false critical and major findings went from 5 in a 1.3.0 run to none in each of 3 runs. For quick reviews, `--verify off` drops the second look and `--no-context` sends hunks only.
 
-**Experimental: `--agentic`** (`agentic: true`) lets the model call read-only tools before answering: `read_file` (also the version before the change), `grep` and `list_dir`, confined to the repository at the reviewed commit, with at most `maxToolCalls` calls and tool output capped by the context budget. It needs a server with tool calling (vLLM with `--enable-auto-tool-choice` and a tool parser, SGLang, LM Studio, recent Ollama) and falls back to a normal review if the server refuses tools. It needs the reviewed commit locally, like related code, and isn't available in VS Code. In testing with a 27B model it found nothing more, the model rarely used the tools, and it was slower ([#35](https://github.com/georgestephanis/diff-leppard/issues/35)).
+**Experimental: `--agentic`** (`agentic: true`) lets the model call read-only tools before answering: `read_file` (also the version before the change), `grep` and `list_dir`, confined to the repository at the reviewed commit, with at most `maxToolCalls` calls and tool output capped by the context budget. It needs a server with tool calling (vLLM with `--enable-auto-tool-choice` and a tool parser, SGLang, LM Studio, recent Ollama) and falls back to a normal review if the server refuses tools. It needs the reviewed commit locally, like related code. In testing with a 27B model it found nothing more, the model rarely used the tools, and it was slower ([#35](https://github.com/georgestephanis/diff-leppard/issues/35)).
 
 ## VS Code extension
 
@@ -133,6 +133,8 @@ Next, open **Settings → Extensions → Diff Leppard** and run **Diff Leppard: 
 | **Open Last Review Report** | Re-open the Markdown report |
 | **Clear Findings** | Remove findings from the Problems panel |
 | Select Model / Test LLM Connection / Set LLM API Key | Setup helpers |
+
+Local reviews are told what the change is for from the message in the Source Control commit box, if you've typed one (`diffLeppard.localDescription`: `commitMessage`, the default; `ask` to be asked each time, prefilled with that message or your last answer until the next commit; or `off`). With `checkDescription` on, its claims are checked against the code.
 
 Each review writes a Markdown report and opens it beside your code. Local reviews also put findings in the **Problems** panel (critical = error, major = warning, minor = info, nit = hint). A PR review does the same when your local `HEAD` is the PR's head commit. Raw prompts and model output are logged to the **Diff Leppard** output channel at Debug level (`Developer: Set Log Level…`).
 
@@ -280,7 +282,11 @@ Settings go in a `watch` block in `~/.config/diff-leppard/config.json`. They're 
   "rereviewOnPush": false,       // review again after new commits
   "skipDrafts": true,
   "maxPerRun": 5,                // cap reviews per check; the rest wait for the next one
-  "intervalMinutes": 5
+  "intervalMinutes": 5,
+  "clones": {                    // optional: local clones, for related code and agentic mode
+    "acme/api": "~/code/api",
+    "acme/*": "~/code/acme"      // a directory of clones named after each repo
+  }
 }
 ```
 
@@ -289,7 +295,7 @@ A few things to know:
 - **State:** reviewed PRs are recorded in `~/.local/state/diff-leppard/watch.json`. A lock file prevents overlapping runs.
 - **Failures:** a failed review is retried up to 3 times per commit.
 - **Pending reviews:** if you already have a pending review on a PR, it's skipped, because GitHub allows only one pending review per person.
-- **Context:** watch reads each PR through the API, so related-code search is skipped and `agentic` has no effect (it warns once at startup).
+- **Context:** watch reads each PR through the API. For repos in `watch.clones` it also fetches the PR's commits into that clone and reviews from there, so related code is searched and `agentic` works. Only objects are fetched (no branch, tag, remote-tracking ref or `FETCH_HEAD` changes, and nothing from the PR is run), from the clone's remote for that repo with your own git credentials. A bare clone made just for this works too. Paths must be absolute or start with `~`, and fetching needs git 2.29 or later; a fetch that fails, prompts for credentials or takes over 5 minutes is skipped with a warning, and that PR is reviewed without the clone. Other repos skip related code, and `agentic` has no effect there (it warns at startup).
 - **Repo config:** each PR's own `.diff-leppard.json` (from its base branch) applies. The directory you start watch in doesn't matter.
 
 To keep it running, use the [systemd user service](docs/watch/diff-leppard-watch.service) on Linux or the [launchd agent](docs/watch/me.diffleppard.watch.plist) on macOS. Both include install instructions.
@@ -436,11 +442,11 @@ Every surface runs the same review, but they don't all get the same context or r
 | | CLI | MCP server | VS Code | GitHub Action | watch |
 | --- | --- | --- | --- | --- | --- |
 | Changed files whole, guidelines, verification | yes | yes | yes | yes | yes |
-| Related code from elsewhere in the repo | yes (PRs: when the head commit is fetched locally) | yes (PRs: when the head commit is fetched in `path`) | yes (PRs: when the head commit is in the workspace's repo) | only if the workflow fetches the PR head commit | no |
-| `agentic` | `--agentic` | launch flag | setting (PRs: when the head commit is in the workspace's repo) | step `env:` (needs the PR head checked out) | no |
+| Related code from elsewhere in the repo | yes (PRs: when the head commit is fetched locally) | yes (PRs: when the head commit is fetched in `path`) | yes (PRs: when the head commit is in the workspace's repo) | only if the workflow fetches the PR head commit | with `watch.clones` |
+| `agentic` | `--agentic` | launch flag | setting (PRs: when the head commit is in the workspace's repo) | step `env:` (needs the PR head checked out) | with `watch.clones` |
 | Changing `verifyFindings` | `--verify`, config or env | launch flag, config or env | setting | `verify-findings` input or step `env:` | `--verify`, config or env |
 | Changing `checkDescription` | config, env or repo config | config, env or repo config | setting or repo config | `check-description` input, step `env:` or repo config | config, env or repo config |
-| Title and description for the description check | `--title`, `--description`, commit messages, PR body | `title`, `description`, commit messages, PR body | PR body | PR body | PR body |
+| Title and description for the description check | `--title`, `--description`, commit messages, PR body | `title`, `description`, commit messages, PR body | Source Control commit box (`localDescription`), PR body | PR body | PR body |
 | Repo `.diff-leppard.json` | yes (PRs: from the base branch) | yes | yes, under workspace settings | yes | yes, each PR's own |
 
 Other differences to be aware of:
@@ -454,7 +460,7 @@ Other differences to be aware of:
 The names below are CLI config keys:
 
 - **VS Code:** prefix them with `diffLeppard.`. VS Code also applies a repo's `.diff-leppard.json`, under workspace settings.
-- **Environment variables:** use `DIFF_LEPPARD_` plus the upper-snake-case name, for example `DIFF_LEPPARD_MAX_CHUNK_CHARS`. `github.*` keys become `DIFF_LEPPARD_GITHUB_*`, for example `DIFF_LEPPARD_GITHUB_ATTRIBUTION=false`.
+- **Environment variables:** use `DIFF_LEPPARD_` plus the upper-snake-case name, for example `DIFF_LEPPARD_MAX_CHUNK_CHARS`. `github.*` keys become `DIFF_LEPPARD_GITHUB_*`, for example `DIFF_LEPPARD_GITHUB_ATTRIBUTION=false`. The older `DIFF_LEPPARD_MIN_SEVERITY` and `DIFF_LEPPARD_TIMEOUT_SECONDS` still work; if both an old and a current name are set, the current one wins, with a warning.
 - **Validation:** values are checked, so `concurrency: "abc"` is an error rather than a silent no-op.
 
 | Key | Default | |

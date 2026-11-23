@@ -139,6 +139,7 @@ export async function runReview(files: FileDiff[], opts: ReviewOptions): Promise
       signal: opts.signal,
       view: opts.view,
       exclude: opts.exclude,
+      changedNotShown: skipped,
     });
     if (opts.signal?.aborted) throw new CancelledError();
     all = v.kept;

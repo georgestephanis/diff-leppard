@@ -75,7 +75,7 @@ export async function reviewPullRequest(p: {
   prefetched?: PullRequestInfo;
   /** A local clone of the repo, if any: used to search for related code when it has the PR's head commit. */
   localRoot?: string;
-  /** The caller never has a local clone (watch) and has already said agentic mode can't run. */
+  /** Don't warn per PR that agentic mode can't run: the caller (watch) has already warned about it. */
   noLocalClone?: boolean;
 }): Promise<PrReview> {
   const label = `${p.repo.owner}/${p.repo.repo}#${p.number}`;
@@ -98,7 +98,7 @@ export async function reviewPullRequest(p: {
     }
   }
   // Guidelines come from prepareContext (base branch, with the AGENTS.md fallback), not loadPullRequest.
-  const loaded = await loadPullRequest(p.client, p.repo, p.number, undefined, p.log, pr0);
+  const loaded = await loadPullRequest(p.client, p.repo, p.number, pr0);
   const llm = await makeLlm(s, p.log);
   // A local checkout that has the PR's head commit allows searching the repo; otherwise read through the API.
   const local = await localViewAt(p.localRoot, loaded.pr.headSha);
