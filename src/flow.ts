@@ -75,7 +75,7 @@ export async function reviewPullRequest(p: {
   prefetched?: PullRequestInfo;
   /** A local clone of the repo, if any: used to search for related code when it has the PR's head commit. */
   localRoot?: string;
-  /** The caller never has a local clone (watch) and has already said agentic mode can't run. */
+  /** Don't warn per PR that agentic mode can't run: the caller (watch) has already warned about it. */
   noLocalClone?: boolean;
 }): Promise<PrReview> {
   const label = `${p.repo.owner}/${p.repo.repo}#${p.number}`;

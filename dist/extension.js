@@ -416,7 +416,8 @@ class Controller {
     commitBoxText(root) {
         try {
             const git = vscode.extensions.getExtension('vscode.git')?.exports?.getAPI?.(1);
-            const repo = git?.repositories?.find((r) => path.resolve(r.rootUri.fsPath) === path.resolve(root));
+            const same = (a, b) => (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
+            const repo = git?.getRepository?.(vscode.Uri.file(root)) ?? git?.repositories?.find((r) => same(r.rootUri.fsPath, root));
             return typeof repo?.inputBox?.value === 'string' ? repo.inputBox.value.trim() : '';
         }
         catch {
@@ -465,9 +466,6 @@ class Controller {
             return;
         const exclude = (0, diff_1.makeExcluder)(s.excludeGlobs);
         const what = stagedOnly ? 'staged changes' : 'uncommitted changes';
-        const purpose = await this.localPurpose(root, s.localDescription);
-        if (purpose === null)
-            return;
         this.log.info(`=== Reviewing ${what} in ${root}`);
         const result = await this.withReviewProgress(`Diff Leppard: ${what}`, async (signal, report) => {
             report('Collecting diff…');
@@ -482,6 +480,10 @@ class Controller {
                 vscode.window.showInformationMessage(`No ${what} to review in ${path.basename(root)}.`);
                 return undefined;
             }
+            // Asked only once there's something to review; Escape cancels the review.
+            const purpose = await this.localPurpose(root, s.localDescription);
+            if (purpose === null || signal.aborted)
+                return undefined;
             const view = (0, context_1.gitRepoView)(root, stagedOnly ? context_1.INDEX : undefined);
             const ctx = await (0, flow_1.prepareContext)({ files: diff.files, settings: { ...s, excludeGlobs: s.excludeGlobs }, llm, view, guideView: view, log: this.logger, signal });
             const head = s.agentic ? await (0, git_1.getHeadSha)(root).catch(() => undefined) : undefined;

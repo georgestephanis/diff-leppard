@@ -377,8 +377,8 @@ function validate(s) {
     }
     if (typeof w.query !== 'string' || typeof w.stateFile !== 'string')
         throw new Error('watch.query and watch.stateFile must be strings');
-    if (!w.clones || typeof w.clones !== 'object' || Array.isArray(w.clones) || Object.entries(w.clones).some(([k, v]) => !/^[\w.-]+\/([\w.-]+|\*)$/.test(k) || typeof v !== 'string' || !v.trim())) {
-        throw new Error('watch.clones must map "owner/repo" or "owner/*" to a local path');
+    if (!w.clones || typeof w.clones !== 'object' || Array.isArray(w.clones) || Object.entries(w.clones).some(([k, v]) => !/^[\w.-]+\/([\w.-]+|\*)$/.test(k) || typeof v !== 'string' || !(path.isAbsolute(v) || /^~([/\\]|$)/.test(v)))) {
+        throw new Error('watch.clones must map "owner/repo" or "owner/*" to an absolute (or ~/…) path');
     }
     for (const [k, v] of [['baseUrl', s.baseUrl], ['github.apiUrl', s.github.apiUrl]]) {
         try {

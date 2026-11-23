@@ -400,6 +400,13 @@ test('codeForChange puts the files and hunks a finding mentions first and stays 
   assert.match(out, /parseToken\(raw\)/, 'its matching hunk is kept even though an earlier hunk is too big');
   assert.match(codeForChange(files, 20000, f), /\(3 more changed file\(s\) not shown: /);
   assert.equal(codeForChange(files, 0, f), '');
+  // Hundreds of files with long paths: the list of files not shown stays short and the total within budget.
+  const many = Array.from({ length: 400 }, (_, i) => mk(`src/${'deep/'.repeat(30)}file${i}.js`, [hunk(1, filler(5))]));
+  for (const max of [800, 3000, 20000]) {
+    const out = codeForChange(many, max, f);
+    assert.ok(out.length <= max && out.length > 0, `many files within ${max}: got ${out.length}`);
+  }
+  assert.match(codeForChange(many, 20000, f), /\(392 more changed file\(s\) not shown: .*, …\)$/);
 });
 
 test('verification labels a finding on a changed file the review skipped as changed', async () => {
@@ -408,9 +415,9 @@ test('verification labels a finding on a changed file the review skipped as chan
   seen.length = 0;
   replies.push({ content: '{"verdict":"confirmed","evidence":"","reason":""}' });
   const f = { file: 'scripts/other.py', line: 2, severity: 'major' as const, title: 'Too big to show', body: 'b', inline: false };
-  await verifyFindings([f], files, { llm: new LlmClient(cfg()), mode: 'critical-major', maxChars: 20000, concurrency: 1, log: nullLogger, view: gitRepoView(repo, to), changedNotShown: ['scripts/other.py'] });
+  await verifyFindings([f], files, { llm: new LlmClient(cfg()), mode: 'critical-major', maxChars: 20000, concurrency: 1, log: nullLogger, view: gitRepoView(repo, to), changedNotShown: [{ path: 'scripts/other.py', reason: 'too large' }] });
   const asked = seen[0].messages[1].content as string;
-  assert.match(asked, /=== File: scripts\/other\.py \(changed by this change, but too large to show its diff/);
+  assert.match(asked, /=== File: scripts\/other\.py \(changed by this change, but its diff isn't shown \(too large\)/);
   assert.doesNotMatch(asked, /not shown as part of the change/);
 });
 

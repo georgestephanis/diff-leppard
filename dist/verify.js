@@ -99,9 +99,9 @@ function codeForChange(files, maxChars, f) {
     });
     scored.sort((a, b) => b.score - a.score || a.i - b.i);
     const shown = scored.slice(0, MAX_CHANGE_FILES);
-    const rest = scored.slice(MAX_CHANGE_FILES);
-    const tail = rest.length ? `\n\n(${rest.length} more changed file(s) not shown: ${rest.map((x) => x.file.path).join(', ')})` : '';
-    let room = maxChars - tail.length;
+    const left = scored.slice(MAX_CHANGE_FILES).map((x) => x.file.path);
+    // Room for the list of files not shown (at most 20 paths): more when files are known to be left out.
+    let room = maxChars - (left.length ? Math.min(120 + 20 * 80, maxChars >> 2) : Math.min(200, maxChars >> 3));
     if (room <= 0)
         return '';
     const weight = (x) => (x.score > 0 ? 2 : 1);
@@ -112,8 +112,10 @@ function codeForChange(files, maxChars, f) {
         const sep = parts.length ? 2 : 0;
         const share = Math.floor(((room - sep) * weight(x)) / weights) - CUT;
         weights -= weight(x);
-        if (share <= 40)
+        if (share <= 40) {
+            left.push(x.file.path);
             continue;
+        }
         const blank = { file: x.file.path, severity: 'minor', title: '', body: '', inline: false };
         let code = codeForFinding(blank, x.file, share);
         if (code.length > share && x.hunks.some((n) => n > 0)) {
@@ -128,20 +130,27 @@ function codeForChange(files, maxChars, f) {
                 }
             }
         }
-        if (!code)
+        if (!code) {
+            left.push(x.file.path);
             continue;
+        }
         code = code.slice(0, room - sep);
         parts.push(code);
         room -= code.length + sep;
     }
-    return parts.join('\n\n') + tail;
+    const body = parts.join('\n\n');
+    if (!left.length)
+        return body;
+    const names = left.slice(0, 20).map((p) => (p.length > 78 ? '…' + p.slice(-77) : p));
+    const tail = `\n\n(${left.length} more changed file(s) not shown: ${names.join(', ')}${left.length > 20 ? ', …' : ''})`;
+    return body + tail.slice(0, Math.max(0, maxChars - body.length));
 }
 /**
  * A finding on a file the change didn't touch (the model often blames a file it only saw as context): that file
  * around the line, read from the reviewed commit, followed by the change itself, since the finding is only
  * real if the change causes or exposes it. Empty when the path isn't safe or the file can't be read.
  */
-async function codeForUnchangedFile(f, files, view, maxChars, changed = false) {
+async function codeForUnchangedFile(f, files, view, maxChars, changedReason) {
     const p = (0, context_1.safeRepoPath)(f.file);
     if (!p)
         return '';
@@ -163,8 +172,8 @@ async function codeForUnchangedFile(f, files, view, maxChars, changed = false) {
     }
     if (!shown)
         shown = content.slice(0, own) + '\n…[cut]';
-    const note = changed
-        ? 'changed by this change, but too large to show its diff; shown as it is after the change, so lines here may be new'
+    const note = changedReason
+        ? `changed by this change, but its diff isn't shown (${changedReason}); shown as it is after the change, so lines here may be new`
         : 'not shown as part of the change; the finding is about this file';
     const header = `=== File: ${p} (${note}) ===\n${shown}\n\nThe change under review:\n\n`;
     return header + codeForChange(files, maxChars - header.length, f);
@@ -212,7 +221,7 @@ async function verifyFindings(findings, files, opts) {
             // Normalise the path before the exclude check, so "x.pem/" or "a/./b" can't slip past a glob.
             const repoPath = !file && f.file !== UNKNOWN_FILE ? (0, context_1.safeRepoPath)(f.file) : undefined;
             if (!code && repoPath && opts.view && !opts.exclude?.(repoPath))
-                code = await codeForUnchangedFile({ ...f, file: repoPath }, files, opts.view, opts.maxChars, !!opts.changedNotShown?.some((x) => (0, context_1.safeRepoPath)(x) === repoPath));
+                code = await codeForUnchangedFile({ ...f, file: repoPath }, files, opts.view, opts.maxChars, opts.changedNotShown?.find((x) => (0, context_1.safeRepoPath)(x.path) === repoPath)?.reason);
             if (!code && !file)
                 code = codeForChange(files, opts.maxChars, f);
             if (!code) {

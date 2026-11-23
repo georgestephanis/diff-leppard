@@ -4,7 +4,8 @@
  * Runs on your machine (e.g. next to the model server), so the model never needs to be reachable from the
  * internet; it only makes outbound calls to GitHub.
  */
-import { promises as fs, constants as fsConstants } from 'fs';
+import { execFile } from 'child_process';
+import { existsSync, promises as fs, realpathSync, constants as fsConstants } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CliSettings, LoadedConfig, RepoConfigInput, WatchSettings } from './config';
@@ -134,8 +135,27 @@ export function clonePathFor(clones: Record<string, string>, repo: RepoRef): str
   const find = (k: string) => Object.entries(clones).find(([key]) => key.toLowerCase() === k.toLowerCase())?.[1];
   const exact = find(`${repo.owner}/${repo.repo}`);
   const dir = exact ? undefined : find(`${repo.owner}/*`);
+  // GitHub forbids "." and ".." as repo names; check anyway, since the name comes from the API.
+  if (!exact && dir && (!/^[\w.-]+$/.test(repo.repo) || /^\.\.?$/.test(repo.repo))) return undefined;
   const p = exact ?? (dir ? path.join(dir, repo.repo) : undefined);
-  return p ? path.resolve(p.replace(/^~(?=$|\/)/, os.homedir())) : undefined;
+  return p ? path.resolve(p.replace(/^~(?=$|[/\\])/, os.homedir())) : undefined;
+}
+
+/** git fetch that can't wait on a prompt or a stalled network: batch-mode ssh, a timeout, and abortable. */
+function fetchQuietly(cwd: string, args: string[], signal?: AbortSignal, timeoutMs = 5 * 60_000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'git',
+      args,
+      {
+        cwd,
+        timeout: timeoutMs,
+        signal,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND || 'ssh -o BatchMode=yes', LC_ALL: 'C' },
+      },
+      (err, _out, stderr) => (err ? reject(new Error(stderr.trim() || err.message)) : resolve()),
+    );
+  });
 }
 
 const hasCommit = async (root: string, sha: string) => (await git(root, ['rev-parse', '--verify', '--quiet', `${sha}^{commit}`], true)).trim() !== '';
@@ -152,10 +172,24 @@ export async function prepareClone(
   pr: { headSha: string; baseSha?: string },
   host: string,
   log: Logger,
+  signal?: AbortSignal,
 ): Promise<string | undefined> {
   const name = `${repo.owner}/${repo.repo}`;
-  if (!(await git(clone, ['rev-parse', '--git-dir'], true)).trim()) {
-    log.warn(`watch.clones: ${clone} isn't a git repository; reviewing ${name}#${number} without it.`);
+  if (!existsSync(clone)) {
+    log.warn(`watch.clones: ${clone} doesn't exist; reviewing ${name}#${number} without it.`);
+    return undefined;
+  }
+  // The clone itself (worktree or bare), not a repo it happens to sit inside.
+  const gitDir = (await git(clone, ['rev-parse', '--absolute-git-dir'], true)).trim();
+  const real = (p: string) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  if (!gitDir || ![clone, path.join(clone, '.git')].map(real).includes(real(gitDir))) {
+    log.warn(`watch.clones: ${clone} isn't the top of a git clone (or git refused it, e.g. safe.directory); reviewing ${name}#${number} without it.`);
     return undefined;
   }
   const want = [pr.headSha, pr.baseSha].filter((x): x is string => !!x && /^[0-9a-f]{7,64}$/i.test(x));
@@ -176,7 +210,10 @@ export async function prepareClone(
       log.warn(`watch.clones: ${clone} has no remote for ${host}/${name}; reviewing #${number} without it.`);
       return undefined;
     }
-    const fetch = (refs: string[]) => git(clone, ['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', remote.name, ...refs]);
+    // --refmap= stops git from also updating remote-tracking refs that match the remote's fetch refspecs
+    // (e.g. a configured refs/pull/*/head:refs/remotes/origin/pr/*). Needs git 2.29+.
+    const fetch = (refs: string[]) =>
+      fetchQuietly(clone, ['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', '--refmap=', remote.name, ...refs], signal);
     try {
       await fetch([`refs/pull/${number}/head`]);
       // The base commit is usually an ancestor already; if not, fetch it by id (GitHub allows that).
@@ -238,7 +275,7 @@ export async function watchOnce(o: WatchRunOptions): Promise<WatchRunSummary> {
     o.say(`reviewing ${key} @ ${short} — ${pr.title}`);
     try {
       const clone = clonePathFor(w.clones, hit.repo);
-      const localRoot = clone ? await prepareClone(clone, hit.repo, hit.number, pr, o.host, o.log) : undefined;
+      const localRoot = clone ? await prepareClone(clone, hit.repo, hit.number, pr, o.host, o.log, o.signal) : undefined;
       const review = await reviewPullRequest({
         client: o.client,
         repo: hit.repo,
