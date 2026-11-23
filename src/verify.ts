@@ -93,8 +93,9 @@ export function codeForChange(files: FileDiff[], maxChars: number, f?: Pick<Find
   scored.sort((a, b) => b.score - a.score || a.i - b.i);
   const shown = scored.slice(0, MAX_CHANGE_FILES);
   const left = scored.slice(MAX_CHANGE_FILES).map((x) => x.file.path);
-  // Room for the list of files not shown (at most 20 paths): more when files are known to be left out.
-  let room = maxChars - (left.length ? Math.min(120 + 20 * 80, maxChars >> 2) : Math.min(200, maxChars >> 3));
+  // Room for the list of files not shown: what the known ones need, plus a little for files dropped below.
+  const listed = left.slice(0, 20).reduce((n, p) => n + Math.min(p.length, 78) + 2, 60);
+  let room = maxChars - Math.min(listed + 200, maxChars >> 2);
   if (room <= 0) return '';
   const weight = (x: (typeof shown)[number]) => (x.score > 0 ? 2 : 1);
   let weights = shown.reduce((n, x) => n + weight(x), 0);

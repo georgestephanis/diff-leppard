@@ -314,6 +314,10 @@ test('watch.clones: path lookup, and fetching a PR into a clone without touching
   run(dir, 'clone', '-q', '--bare', path.join(dir, 'gh/acme/app.git'), path.join(dir, 'bare.git'));
   assert.equal(await prepareClone(path.join(dir, 'bare.git'), { owner: 'acme', repo: 'app' }, 7, { headSha: head }, 'github.com', log), path.join(dir, 'bare.git'));
   assert.deepEqual(warnings, []);
+  // A linked worktree of the clone works too.
+  run(clone, 'worktree', 'add', '-q', '--detach', path.join(dir, 'wt'));
+  assert.equal(await prepareClone(path.join(dir, 'wt'), { owner: 'acme', repo: 'app' }, 7, { headSha: head }, 'github.com', log), path.join(dir, 'wt'));
+  assert.deepEqual(warnings, []);
   assert.equal(clonePathFor({ 'acme/*': '/code' }, { owner: 'acme', repo: '..' }), undefined);
   assert.equal(clonePathFor({ 'acme/*': '/code' }, { owner: 'acme', repo: 'a/b' }), undefined);
   await assert.rejects(loadConfig(undefined, { watch: { clones: { 'acme/app': 'relative/path' } } }, { DIFF_LEPPARD_CONFIG: '/nonexistent' }), /absolute/);

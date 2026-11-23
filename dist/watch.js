@@ -148,13 +148,13 @@ function clonePathFor(clones, repo) {
     return p ? path.resolve(p.replace(/^~(?=$|[/\\])/, os.homedir())) : undefined;
 }
 /** git fetch that can't wait on a prompt or a stalled network: batch-mode ssh, a timeout, and abortable. */
-function fetchQuietly(cwd, args, signal, timeoutMs = 5 * 60_000) {
+function fetchQuietly(cwd, ownSsh, args, signal, timeoutMs = 5 * 60_000) {
     return new Promise((resolve, reject) => {
         (0, child_process_1.execFile)('git', args, {
             cwd,
             timeout: timeoutMs,
             signal,
-            env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND || 'ssh -o BatchMode=yes', LC_ALL: 'C' },
+            env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...(ownSsh ? {} : { GIT_SSH_COMMAND: 'ssh -o BatchMode=yes' }), LC_ALL: 'C' },
         }, (err, _out, stderr) => (err ? reject(new Error(stderr.trim() || err.message)) : resolve()));
     });
 }
@@ -170,17 +170,18 @@ async function prepareClone(clone, repo, number, pr, host, log, signal) {
         log.warn(`watch.clones: ${clone} doesn't exist; reviewing ${name}#${number} without it.`);
         return undefined;
     }
-    // The clone itself (worktree or bare), not a repo it happens to sit inside.
-    const gitDir = (await (0, git_1.git)(clone, ['rev-parse', '--absolute-git-dir'], true)).trim();
+    // The clone itself (a worktree's top, or a bare repo), not a repo it happens to sit inside.
     const real = (p) => {
         try {
-            return (0, fs_1.realpathSync)(p);
+            return fs_1.realpathSync.native(p);
         }
         catch {
             return p;
         }
     };
-    if (!gitDir || ![clone, path.join(clone, '.git')].map(real).includes(real(gitDir))) {
+    const bare = (await (0, git_1.git)(clone, ['rev-parse', '--is-bare-repository'], true)).trim() === 'true';
+    const top = (await (0, git_1.git)(clone, ['rev-parse', bare ? '--absolute-git-dir' : '--show-toplevel'], true)).trim();
+    if (!top || real(top) !== real(clone)) {
         log.warn(`watch.clones: ${clone} isn't the top of a git clone (or git refused it, e.g. safe.directory); reviewing ${name}#${number} without it.`);
         return undefined;
     }
@@ -206,7 +207,9 @@ async function prepareClone(clone, repo, number, pr, host, log, signal) {
         }
         // --refmap= stops git from also updating remote-tracking refs that match the remote's fetch refspecs
         // (e.g. a configured refs/pull/*/head:refs/remotes/origin/pr/*). Needs git 2.29+.
-        const fetch = (refs) => fetchQuietly(clone, ['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', '--refmap=', remote.name, ...refs], signal);
+        // Never wait on an ssh prompt, unless the user chose their own ssh command (identity, agent).
+        const ownSsh = !!(process.env.GIT_SSH_COMMAND || process.env.GIT_SSH || (await (0, git_1.git)(clone, ['config', 'core.sshCommand'], true)).trim());
+        const fetch = (refs) => fetchQuietly(clone, ownSsh, ['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', '--refmap=', remote.name, ...refs], signal);
         try {
             await fetch([`refs/pull/${number}/head`]);
             // The base commit is usually an ancestor already; if not, fetch it by id (GitHub allows that).
@@ -214,6 +217,8 @@ async function prepareClone(clone, repo, number, pr, host, log, signal) {
                 await fetch([pr.baseSha]).catch(() => undefined);
         }
         catch (e) {
+            if (signal?.aborted)
+                throw e;
             log.warn(`watch.clones: fetching ${name}#${number} into ${clone} failed (${e.message}); reviewing without it.`);
             return undefined;
         }
