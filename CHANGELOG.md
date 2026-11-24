@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.4.0 (2026-11-24)
+
+1.2.0 was a quiet pre-release and 1.3.0 was never published, so this is the first full release with their changes too: `diff-leppard watch`, SARIF and reviewdog output, the MCP server, the Neovim plugin and the org rollout guide. See [1.3.0](https://github.com/georgestephanis/diff-leppard/blob/main/CHANGELOG.md#130-2026-11-10) and [1.2.0](https://github.com/georgestephanis/diff-leppard/blob/main/CHANGELOG.md#120-2026-11-09) in the changelog.
 
 - **More context per review, sized from the model's context window.** Each request now carries more than the diff hunks, within one budget, so a bigger context window buys more context and a small one degrades to plain hunks. See [What the model sees](README.md#what-the-model-sees).
   - Changed files are shown whole when they fit (`fullFileMaxChars`), otherwise with hunks widened by as many lines as fit (#30).
